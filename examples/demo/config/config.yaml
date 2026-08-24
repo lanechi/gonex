@@ -1,0 +1,10 @@
+server:
+  address: ":8000"
+  mode: debug
+  openapi:
+    enabled: true
+
+logger:
+  level: info
+  format: console
+  output: stdout

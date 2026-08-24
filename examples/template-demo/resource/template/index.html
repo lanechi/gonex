@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>gonex Template Demo</title>
+  <style>
+    body {
+      max-width: 720px;
+      margin: 4rem auto;
+      padding: 0 1.5rem;
+      font: 1.1rem/1.6 system-ui, sans-serif;
+      color: #243047;
+      background: #f4f7fb;
+    }
+    main {
+      padding: 2rem;
+      border: 1px solid #d8e0ee;
+      border-radius: 1rem;
+      background: white;
+      box-shadow: 0 1rem 3rem rgba(36, 48, 71, .08);
+    }
+    code { color: #536dfe; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Hello, {{ .Name }}!</h1>
+    <p>{{ .Message }}</p>
+    <p>Rendered at <code>{{ .RenderedAt }}</code></p>
+    <p>Edit <code>resource/template/index.html</code>, then refresh this page.</p>
+  </main>
+</body>
+</html>

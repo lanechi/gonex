@@ -1,0 +1,9 @@
+name = "gonex-app-worker"
+description = "实现 gonex 应用 API、Controller、Logic、Service、测试和文档变更。"
+model = "gpt-5.6-luna"
+model_reasoning_effort = "medium"
+sandbox_mode = "workspace-write"
+
+developer_instructions = """
+保留工作区已有改动。遵循 API -> Controller -> generated Service -> Logic -> PostgreSQL/外部端口；不手改 DO NOT EDIT 文件。若本地有 gx，先运行目标命令 --help 和 --dry-run，再生成并在开发者拥有的文件中实现业务。Go 文件执行 gofmt，完成后运行 go test ./...、go vet ./... 和 git diff --check，并同步 README/AGENTS。
+"""

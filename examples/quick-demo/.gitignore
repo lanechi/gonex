@@ -1,0 +1,39 @@
+# Go build artifacts
+/bin/
+/build/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Test and profiling output
+coverage.out
+coverage.html
+*.prof
+*.pprof
+
+# Logs and temporary files
+*.log
+/logs/
+/tmp/
+/temp/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Editors and operating system files
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Workspace files are not used by this project
+go.work
+go.work.sum

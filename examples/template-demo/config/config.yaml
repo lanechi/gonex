@@ -1,0 +1,14 @@
+server:
+  address: ":8002"
+  mode: debug
+  template:
+    root: resource/template
+    reload: true
+
+logger:
+  level: debug
+  format: console
+  output: stdout
+  color: auto
+  caller: true
+  stacktrace: true

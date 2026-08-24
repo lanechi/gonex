@@ -1,0 +1,4 @@
+interface:
+  display_name: "Gonex Controller"
+  short_description: "Implement gonex controllers and HTTP boundaries"
+  default_prompt: "Use $gonex-implement-controller to implement this gonex controller action."

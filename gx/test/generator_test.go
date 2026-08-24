@@ -1,0 +1,142 @@
+package test
+
+import (
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/lanechi/gonex/gx/internal/gen"
+)
+
+func TestGeneratorsCreateControllerServiceAndLogic(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.26.0\n")
+	writeFile(t, filepath.Join(root, "api/user/v1/user.go"), `package v1
+
+import "github.com/lanechi/gonex/g"
+
+type CreateReq struct {
+	g.Meta `+"`path:\"/users\" method:\"post\" summary:\"create user\"`"+`
+}
+
+type CreateRes struct{}
+`)
+	writeFile(t, filepath.Join(root, "internal/logic/user/user.go"), `package user
+
+import "context"
+
+type sUser struct{}
+
+func (*sUser) Ping(context.Context) error { return nil }
+`)
+
+	project, err := gen.DiscoverProject(filepath.Join(root, "api", "user", "v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gen.GenerateControllers(project, gen.ControllerOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gen.GenerateServices(project, gen.ServiceOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, relative := range []string{
+		"internal/controller/user/user_v1_generated.go",
+		"internal/controller/user/user_v1_user.go",
+		"internal/service/user.go",
+		"internal/logic/logic.go",
+	} {
+		path := filepath.Join(root, filepath.FromSlash(relative))
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", relative, err)
+		}
+		if _, err := parser.ParseFile(token.NewFileSet(), path, content, parser.ParseComments); err != nil {
+			t.Fatalf("generated %s is not valid Go: %v", relative, err)
+		}
+	}
+	service, _ := os.ReadFile(filepath.Join(root, "internal/service/user.go"))
+	if !strings.Contains(string(service), "func User() IUser") {
+		t.Fatalf("service registration was not generated: %s", service)
+	}
+}
+
+func TestGeneratorsPreserveDeveloperImplementationAndSupportDryRun(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.26.0\n")
+	writeFile(t, filepath.Join(root, "api/user/v1/user.go"), `package v1
+
+import "github.com/lanechi/gonex/g"
+
+type CreateReq struct { g.Meta `+"`path:\"/users\" method:\"post\"`"+` }
+type CreateRes struct{}
+`)
+	project, err := gen.DiscoverProject(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gen.GenerateControllers(project, gen.ControllerOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	implementation := filepath.Join(root, "internal/controller/user/user_v1_user.go")
+	writeFile(t, implementation, "package user\n\n// developer implementation\n")
+	before, _ := os.ReadFile(implementation)
+	if _, err := gen.GenerateControllers(project, gen.ControllerOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(implementation)
+	if string(before) != string(after) {
+		t.Fatal("controller implementation was overwritten")
+	}
+
+	dryRoot := t.TempDir()
+	writeFile(t, filepath.Join(dryRoot, "go.mod"), "module example.com/dry\n\ngo 1.26.0\n")
+	writeFile(t, filepath.Join(dryRoot, "api/user/v1/user.go"), string(mustRead(t, filepath.Join(root, "api/user/v1/user.go"))))
+	dryProject, err := gen.DiscoverProject(dryRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gen.GenerateControllers(dryProject, gen.ControllerOptions{DryRun: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dryRoot, "internal/controller")); !os.IsNotExist(err) {
+		t.Fatalf("dry-run wrote controller output: %v", err)
+	}
+}
+
+func TestCanonicalDemoGenerationDryRun(t *testing.T) {
+	project, err := gen.DiscoverProject(filepath.Join(repositoryRoot(), "examples", "demo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, result := range []func() (gen.Result, error){
+		func() (gen.Result, error) {
+			return gen.GenerateControllers(project, gen.ControllerOptions{DryRun: true})
+		},
+		func() (gen.Result, error) { return gen.GenerateServices(project, gen.ServiceOptions{DryRun: true}) },
+	} {
+		output, err := result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, change := range output.Changes {
+			if change.Kind != "SKIP" {
+				t.Fatalf("canonical demo dry-run found a difference: %#v", change)
+			}
+		}
+	}
+}
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

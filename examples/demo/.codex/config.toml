@@ -1,0 +1,29 @@
+model = "gpt-5.6-sol"
+model_reasoning_effort = "high"
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
+
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 5
+default_subagent_reasoning_effort = "medium"
+
+[agents.architect]
+description = "分析 gonex 应用架构、模块边界和复杂变更方案。"
+config_file = "agents/architect.toml"
+
+[agents.explorer]
+description = "只读探索应用代码、分层契约、生成文件所有权和影响范围。"
+config_file = "agents/explorer.toml"
+
+[agents.reviewer]
+description = "审查 API、Controller、Service、Logic、PostgreSQL 生命周期和测试。"
+config_file = "agents/reviewer.toml"
+
+[agents.worker]
+description = "实现边界明确的应用变更并同步 gx 生成结果、测试和文档。"
+config_file = "agents/worker.toml"
+
+[agents.tester]
+description = "执行测试、lint、build 和 gx 生成一致性验证。"
+config_file = "agents/tester.toml"

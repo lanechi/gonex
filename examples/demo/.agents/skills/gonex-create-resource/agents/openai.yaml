@@ -1,0 +1,4 @@
+interface:
+  display_name: "Gonex Create Resource"
+  short_description: "Create complete gonex API resources with gx"
+  default_prompt: "Use $gonex-create-resource to add a complete API resource to this gonex project."
