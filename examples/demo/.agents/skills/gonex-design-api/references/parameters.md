@@ -25,7 +25,9 @@ type UpdateUserReq struct {
 | `security` | 安全方案，可使用 `BearerAuth:scope` 形式 |
 | `consumes` / `produces` | 媒体类型列表 |
 
-不要把 RouterGroup 前缀重复写进 `path`。先检查项目现有 Bind 方式和路由测试。
+不要把 RouterGroup 前缀重复写进 `path`。路径参数校验针对拼接后的最终路由执行，因此分组前缀
+也可以声明参数，例如 `Group("/tenants/:tenant")` 下用 `path:"tenant"` 绑定；先检查项目现有
+Bind 方式和路由测试。
 
 ## 2. 字段来源
 

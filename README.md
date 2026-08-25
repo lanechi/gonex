@@ -169,6 +169,10 @@ server.Group("/api", func(group *ghttp.RouterGroup) {
 框架会在修改真实 Gin 路由树前扫描并校验整个批次。路径字段缺失、重复路由、参数路由冲突或
 `nil` Middleware 都会在注册阶段返回错误，不会留下部分注册。
 
+路径参数校验针对最终路由执行，因此 RouterGroup 前缀也可以声明路径参数：例如
+`Group("/tenants/:tenant")` 下的请求结构体可使用 `path:"tenant"` 绑定该参数；Controller 自身的
+`g.Meta.path` 不要重复写入分组前缀。
+
 ## 请求绑定与校验
 
 字段来源：

@@ -59,8 +59,9 @@ Logger、SessionManager、模板管理器、OpenAPI 缓存、配置快照和生�
 ### 3.2 路由契约
 
 `router` 负责解析请求类型上的 `g.Meta` 和字段标签，构造 `Definition` 与可复用 `Binder`。
-这里完成反射、类型校验、字段路径收集和路由参数契约检查，使请求热路径只实例化请求、绑定
-值、执行校验并调用 Controller。
+这里完成反射、类型校验和字段路径收集；路由参数契约在 `ghttp` 注册最终路径时检查，因此
+RouterGroup 前缀声明的参数也会参与一一对应校验。请求热路径只实例化请求、绑定值、执行校验并
+调用 Controller。
 
 框架维护自己的 `Registry`，因为 Gin 的路由树只适合执行，不足以承担路由快照、OpenAPI、
 隔离测试和框架级冲突语义。Registry 对外返回深拷贝，调用方不能修改 Server 内部状态。

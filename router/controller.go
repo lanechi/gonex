@@ -32,7 +32,9 @@ type Definition struct {
 	Binder         *Binder
 }
 
-// ScanController validates and converts a controller into route definitions.
+// ScanController scans and converts a controller into route definitions.
+// Path bindings are validated when the definitions are registered, after any
+// RouterGroup prefix has been applied.
 func ScanController(controller any) ([]Definition, error) {
 	value := reflect.ValueOf(controller)
 	if !value.IsValid() {
@@ -60,9 +62,6 @@ func ScanController(controller any) ([]Definition, error) {
 		}
 		binder, err := NewBinder(requestType)
 		if err != nil {
-			return nil, fmt.Errorf("invalid controller method %s.%s: %w", controllerName, methodName, err)
-		}
-		if err := ValidatePathBindings(metadata.Path, binder.Fields); err != nil {
 			return nil, fmt.Errorf("invalid controller method %s.%s: %w", controllerName, methodName, err)
 		}
 		var responseType reflect.Type

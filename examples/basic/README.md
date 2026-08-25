@@ -8,6 +8,7 @@
 - 使用 `g.Meta` 声明 method、path 和 OpenAPI 元数据；
 - 使用 `RouterGroup.Bind` 注册 Controller；
 - 将 query 参数绑定到请求结构体；
+- 验证 RouterGroup 前缀中的 path 参数可以绑定到请求结构体；
 - 返回统一响应并自动生成 OpenAPI/Swagger。
 
 本目录是独立 module `github.com/lanechi/gonex/examples/basic`，通过 `go.mod` 中的本地
@@ -46,7 +47,7 @@ GET http://localhost:8000/docs/
 ## 代码入口
 
 [`main.go`](main.go) 同时定义 `HelloReq`、`HelloRes`、Controller 和 Server 启动代码，适合用来
-验证公共 API 的最小改动。
+验证公共 API 的最小改动；`main_test.go` 还覆盖了带 path 参数的 RouterGroup 前缀。
 
 ## 验证
 

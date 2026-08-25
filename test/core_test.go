@@ -1,6 +1,7 @@
 package ghttp_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -98,6 +99,36 @@ func TestGroupBindAndMiddleware(t *testing.T) {
 	}
 	if routes := server.Routes(); len(routes) != 1 || routes[0].Path != "/api/hello" {
 		t.Fatalf("group routes = %#v", routes)
+	}
+}
+
+type groupedPathRequest struct {
+	g.Meta `path:"/items" method:"get"`
+	Tenant string `path:"tenant"`
+}
+
+type groupedPathController struct{}
+
+func (*groupedPathController) List(_ context.Context, request *groupedPathRequest) (*helloResponse, error) {
+	return &helloResponse{Message: request.Tenant}, nil
+}
+
+func TestGroupBindValidatesPathBindingsAfterPrefix(t *testing.T) {
+	server := ghttp.NewServer()
+	server.Group("/tenants/:tenant", func(group *ghttp.RouterGroup) {
+		if err := group.Bind(&groupedPathController{}); err != nil {
+			t.Fatalf("group.Bind() error = %v", err)
+		}
+	})
+
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/tenants/acme/items", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"message":"acme"`) {
+		t.Fatalf("group path binding: status=%d body=%s", response.Code, response.Body.String())
+	}
+	routes := server.Routes()
+	if len(routes) != 1 || routes[0].Path != "/tenants/:tenant/items" {
+		t.Fatalf("group path route = %#v", routes)
 	}
 }
 
