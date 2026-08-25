@@ -40,3 +40,31 @@ func TestRouterGroupPrefixParticipatesInPathBinding(t *testing.T) {
 		t.Fatalf("group path binding: status=%d body=%s", response.Code, response.Body.String())
 	}
 }
+
+type defaultQueryReq struct {
+	g.Meta `path:"/defaults" method:"get"`
+	Page   int `query:"page" d:"1"`
+}
+
+type defaultQueryRes struct {
+	Page int `json:"page"`
+}
+
+type defaultQueryController struct{}
+
+func (*defaultQueryController) List(_ context.Context, request *defaultQueryReq) (*defaultQueryRes, error) {
+	return &defaultQueryRes{Page: request.Page}, nil
+}
+
+func TestOptionalQueryParameterUsesDefault(t *testing.T) {
+	server := ghttp.NewServer()
+	if err := server.Bind(&defaultQueryController{}); err != nil {
+		t.Fatal(err)
+	}
+
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/defaults", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"page":1`) {
+		t.Fatalf("default query parameter: status=%d body=%s", response.Code, response.Body.String())
+	}
+}

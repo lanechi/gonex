@@ -184,6 +184,9 @@ func (c *Controller) Action(ctx context.Context, req *ActionReq) (*ActionRes, er
 - `path`、`query`、`header`、`cookie`、`form`、`file` 会在注册阶段生成 `FieldBinding`；
 - JSON 请求体依据 Content-Type 和标准 `json` 标签解码，不保存为 `FieldBinding`。
 
+非 JSON 参数缺失时，Binder 按字段来源读取顺序应用 `default` 值，再进入 `binding` 和 `validate`；显式
+传入值保持不变。`default` 和短别名 `d` 等价，路径参数不支持默认值，JSON body 的 `default`/`d` 只描述 OpenAPI 契约。
+
 `binding` 与 `validate` 是两套独立契约。应用分别通过 `WithBindingValidator` 和 `WithValidator` 注入
 配置完成的独立 Validator；框架在构造后只并发读取它们，不在请求期间切换 tag name 或修改内部缓存。
 自定义 struct-level 规则通常注册在 `validate` Validator，因此每次请求只执行一次。

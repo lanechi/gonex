@@ -201,6 +201,10 @@ HTTP 400 响应。`WithValidator` 注入配置完成的 `validate` Validator；�
 用 `WithBindingValidator` 另行注入已设置 `binding` tag name 的独立实例。Server 将两个实例视为只读，
 不会在请求期间切换标签或清理缓存；错误字段保留嵌套 Go 字段路径。
 
+查询、Header、Cookie 和表单参数可以使用 `default`（或短别名 `d`）设置可选默认值。参数缺失时，Binder 会先应用默认值，
+再执行 `binding` 与 `validate`；显式传入的值不会被覆盖。例如 `Page int \`query:"page" default:"1"\``。
+路径参数不能设置默认值，JSON 请求体中的 `default`/`d` 目前仅用于 OpenAPI 描述。
+
 ## Middleware
 
 Middleware 执行顺序为：

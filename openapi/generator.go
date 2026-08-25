@@ -428,10 +428,11 @@ func schemaForFieldWithSeen(field reflect.StructField, fieldType reflect.Type, s
 	if description := firstNonEmptyTag(field, "description", "dc"); description != "" {
 		schema["description"] = description
 	}
-	for _, tagName := range []string{"example", "default"} {
-		if raw := strings.TrimSpace(field.Tag.Get(tagName)); raw != "" {
-			schema[tagName] = parseJSONTagValue(raw)
-		}
+	if raw := strings.TrimSpace(field.Tag.Get("example")); raw != "" {
+		schema["example"] = parseJSONTagValue(raw)
+	}
+	if raw, ok := defaultTagValue(field); ok {
+		schema["default"] = parseJSONTagValue(strings.TrimSpace(raw))
 	}
 	if raw := strings.TrimSpace(field.Tag.Get("enum")); raw != "" {
 		values := make([]any, 0)
@@ -687,6 +688,16 @@ func fieldTagName(field reflect.StructField, tag, fallback string) (string, bool
 		return fallback, true
 	}
 	return name, true
+}
+
+func defaultTagValue(field reflect.StructField) (string, bool) {
+	if raw, ok := field.Tag.Lookup("default"); ok {
+		return raw, true
+	}
+	if raw, ok := field.Tag.Lookup("d"); ok {
+		return raw, true
+	}
+	return "", false
 }
 
 func hasBindingTags(field reflect.StructField) bool {

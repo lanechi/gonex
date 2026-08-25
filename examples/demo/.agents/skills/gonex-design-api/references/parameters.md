@@ -66,7 +66,7 @@ path/query/header/cookie/form 支持 string、bool、整数、无符号整数、
 
 - `description` 或 `dc`：说明；优先使用 `description`；
 - `example`：示例；
-- `default`：默认值，仅描述契约，不自动给字段赋值；
+- `default` / `d`：非 JSON 参数缺失时使用的默认值；Binder 在校验前应用，显式传入值保持不变；JSON body 中仅描述契约；
 - `enum`：枚举值；
 - `binding` / `validate` 中的边界会投影为 schema 约束。
 
@@ -80,13 +80,14 @@ OpenAPI 文档不是替代测试的注释层。修改字段后检查 `/openapi.j
 ```go
 type ListUserReq struct {
 	g.Meta   `path:"/users" method:"get" tags:"Users" summary:"List users" operationId:"listUsers"`
-	Page     int      `query:"page" validate:"gte=1" default:"1"`
+	Page     int      `query:"page" validate:"gte=1" d:"1"`
 	PageSize int      `query:"pageSize" validate:"gte=1,lte=100" default:"20"`
 	Status   []string `query:"status" validate:"omitempty,dive,oneof=active disabled"`
 }
 ```
 
-若应用需要真正的默认值，必须在 Controller/应用层显式归一化，`default` 只影响文档。
+路径参数不能设置默认值；分页等可选 query/form/header/cookie 参数可以使用 `default` 或 `d`，但业务状态和安全字段
+仍应在 Logic/Service 中明确处理。
 
 ### JSON 创建
 

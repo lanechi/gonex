@@ -88,6 +88,10 @@ type FieldBinding struct {
 	Cookie string
 	// Form 是 URL 编码表单或 multipart 表单的字段名。
 	Form string
+	// Default 是非 JSON 参数缺失时使用的默认文本值，来源于 default 或 d 标签。
+	Default string
+	// HasDefault 区分空字符串默认值和未设置默认值。
+	HasDefault bool
 	// File 是 multipart 上传文件的字段名。
 	File string
 }
@@ -95,8 +99,9 @@ type FieldBinding struct {
 // Binder 使用路由注册阶段生成的元数据执行请求数据绑定。
 //
 // Binder 会根据 Content-Type 处理 JSON 请求体，并处理 URL 查询参数、路径参数、
-// 请求头、Cookie、表单字段和 multipart 文件。它负责将字符串转换为目标 Go 类型，
-// 但不会执行 binding 或 validate 规则；校验由绑定成功后的 Server 阶段完成。
+// 请求头、Cookie、表单字段和 multipart 文件。非 JSON 参数缺失时，Binder 会应用
+// FieldBinding.Default。它负责将字符串转换为目标 Go 类型，但不会执行 binding 或
+// validate 规则；校验由绑定成功后的 Server 阶段完成。
 //
 // 基本使用方式如下：
 //
@@ -211,6 +216,18 @@ func collectFieldBindings(structType reflect.Type, prefix []int, fields *[]Field
 		if usesStringBinding && !isMultipartFileType(field.Type) && !supportsStringBinding(field.Type) {
 			return fmt.Errorf("field %s has unsupported binding type %s", field.Name, field.Type)
 		}
+		defaultValue, hasDefault := fieldDefaultTag(field)
+		if hasDefault && usesStringBinding {
+			if binding.Path != "" {
+				return fmt.Errorf("field %s cannot use default with path binding", field.Name)
+			}
+			value := reflect.New(field.Type).Elem()
+			if err := assignStrings(value, []string{defaultValue}); err != nil {
+				return fmt.Errorf("field %s has invalid default %q: %w", field.Name, defaultValue, err)
+			}
+			binding.Default = defaultValue
+			binding.HasDefault = true
+		}
 		if binding.Path != "" || binding.Query != "" || binding.Header != "" || binding.Cookie != "" || binding.Form != "" || binding.File != "" {
 			*fields = append(*fields, binding)
 		}
@@ -225,7 +242,8 @@ func collectFieldBindings(structType reflect.Type, prefix []int, fields *[]Field
 // multipart/form-data 时解析表单。path、query、header、cookie 和 form 参数
 // 按 FieldBinding 读取，格式错误时返回 *BindingError。
 //
-// Bind 只负责数据解析；required 等校验规则由 Bind 成功后的 Server 阶段单独执行。
+// Bind 只负责数据解析和缺失非 JSON 参数的默认值；required 等校验规则由 Bind
+// 成功后的 Server 阶段单独执行。
 func (binder *Binder) Bind(ginContext *gin.Context, target any) error {
 	request := ginContext.Request
 	targetValue := reflect.ValueOf(target)
@@ -337,7 +355,16 @@ func (binder *Binder) Bind(ginContext *gin.Context, target any) error {
 			}
 		}
 		if field.Form != "" {
-			if _, err := bindStrings(field.Form, formValues(request, field.Form)); err != nil {
+			bound, err := bindStrings(field.Form, formValues(request, field.Form))
+			if err != nil {
+				return err
+			}
+			if bound {
+				continue
+			}
+		}
+		if field.HasDefault {
+			if _, err := bindStrings("default", []string{field.Default}); err != nil {
 				return err
 			}
 		}
@@ -578,6 +605,17 @@ func fieldTagName(field reflect.StructField, tag, fallback string) (string, bool
 	}
 	return name, true
 }
+
+func fieldDefaultTag(field reflect.StructField) (string, bool) {
+	if raw, ok := field.Tag.Lookup("default"); ok {
+		return strings.TrimSpace(raw), true
+	}
+	if raw, ok := field.Tag.Lookup("d"); ok {
+		return strings.TrimSpace(raw), true
+	}
+	return "", false
+}
+
 func hasBindingTags(field reflect.StructField) bool {
 	for _, tag := range []string{"path", "query", "header", "cookie", "form", "file", "json"} {
 		if _, ok := field.Tag.Lookup(tag); ok {

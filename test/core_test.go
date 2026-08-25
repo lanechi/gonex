@@ -215,6 +215,59 @@ func TestRequestBindingValidationAndFormConversion(t *testing.T) {
 	}
 }
 
+type defaultRequest struct {
+	g.Meta `path:"/defaults" method:"get"`
+	Page   int    `query:"page" default:"1" validate:"gte=1"`
+	Sort   string `query:"sort" d:"createdAt"`
+}
+
+type defaultResponse struct {
+	Page int    `json:"page"`
+	Sort string `json:"sort"`
+}
+
+type defaultController struct{}
+
+func (*defaultController) List(_ context.Context, request *defaultRequest) (*defaultResponse, error) {
+	return &defaultResponse{Page: request.Page, Sort: request.Sort}, nil
+}
+
+func TestRequestParameterDefaultsAreAppliedBeforeValidation(t *testing.T) {
+	server := ghttp.NewServer()
+	if err := server.Bind(&defaultController{}); err != nil {
+		t.Fatal(err)
+	}
+	operation := server.OpenAPI().Paths["/defaults"]["get"]
+	foundShortDefault := false
+	for _, parameter := range operation.Parameters {
+		if parameter["name"] != "sort" {
+			continue
+		}
+		foundShortDefault = true
+		schema, ok := parameter["schema"].(map[string]any)
+		if !ok || schema["default"] != "createdAt" {
+			t.Fatalf("short default tag was not added to OpenAPI: %#v", parameter)
+		}
+	}
+	if !foundShortDefault {
+		t.Fatal("sort parameter is missing from OpenAPI")
+	}
+
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/defaults", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"page":1`) ||
+		!strings.Contains(response.Body.String(), `"sort":"createdAt"`) {
+		t.Fatalf("default parameters: status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/defaults?page=3&sort=name", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"page":3`) ||
+		!strings.Contains(response.Body.String(), `"sort":"name"`) {
+		t.Fatalf("explicit parameters: status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 type customEncoder struct{}
 
 func (customEncoder) Encode(ctx *ghttp.Context, data any) error {
