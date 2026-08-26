@@ -114,6 +114,8 @@ type UploadAvatarReq struct {
 ## 6. 响应模型
 
 - 使用专用响应 DTO，避免直接返回数据库 Entity。
+- 响应可以是普通值或指针；除 struct 外，也支持命名 slice、map、标量等可由 JSON 编码器处理的类型，例如
+  `type AppUserReviewsRes []model.AppEvaluationReview`。
 - 列表明确 `items`、分页和 `total` 的语义；空列表使用项目约定的空 slice/null 行为。
 - 时间、金额、ID 和枚举序列化格式保持项目一致。
 - 不在业务 `Res` 中重复 gonex 默认的 `code/message/data` 包络，除非项目替换了 ResponseEncoder。

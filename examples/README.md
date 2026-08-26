@@ -20,7 +20,7 @@ examples/
 | 示例 | 默认地址 | 证明的能力 |
 | --- | --- | --- |
 | [`demo`](demo/README.md) | `:8000` | `gx init` 唯一规范模板、API→Controller→Service→Logic、PostgreSQL |
-| [`basic`](basic/README.md) | `:8000` | 最小 Server、`g.Meta`、query 绑定、统一响应、OpenAPI |
+| [`basic`](basic/README.md) | `:8000` | 最小 Server、`g.Meta`、query 绑定、统一响应、值类型响应、OpenAPI |
 | [`quick-demo`](quick-demo/README.md) | `:8000`/`:8001`/`:8002` | 分层 API→Service→Logic、PostgreSQL、GORM、多 Server 和持续生成 |
 | [`template-demo`](template-demo/README.md) | `:8002` | HTML 模板、配置、渲染和模板热加载 |
 

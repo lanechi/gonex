@@ -16,6 +16,12 @@ type HelloRes struct {
 	Message string `json:"message"`
 }
 
+type HelloNamesReq struct {
+	g.Meta `path:"/names" method:"get" summary:"List names"`
+}
+
+type HelloNamesRes []string
+
 type HelloController struct{}
 
 func (*HelloController) Hello(_ context.Context, req *HelloReq) (*HelloRes, error) {
@@ -24,6 +30,10 @@ func (*HelloController) Hello(_ context.Context, req *HelloReq) (*HelloRes, erro
 		name = "gonex"
 	}
 	return &HelloRes{Message: "Hello, " + name + "!"}, nil
+}
+
+func (*HelloController) Names(context.Context, *HelloNamesReq) (HelloNamesRes, error) {
+	return HelloNamesRes{"gonex", "gopher"}, nil
 }
 
 func main() {

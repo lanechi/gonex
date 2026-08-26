@@ -72,7 +72,8 @@ Session 保存到请求之外；自定义远程存储应实现 context-aware sto
 
 ## 4. 直接响应
 
-普通 JSON 返回 `*Res`，由统一 ResponseEncoder 包装。以下场景可直接写：
+普通 JSON 返回 `Res` 或 `*Res`，也可以返回命名 slice、map、标量等 JSON 可编码类型，由统一 ResponseEncoder
+包装。以下场景可直接写：
 
 ```go
 func (*ControllerV1) Download(

@@ -144,6 +144,19 @@ func (*UserController) Create(
 
 请求类型必须是结构体指针；方法、路径和文档元数据定义在嵌入的 `g.Meta` 上：
 
+响应类型不要求必须是结构体指针。只要最终能由 JSON 编码器编码，就可以使用普通值或指针，包含命名
+slice、map、标量和 struct，例如：
+
+```go
+type AppUserReviewsRes []model.AppEvaluationReview
+
+func (*ReviewController) List(context.Context, *ListReviewsReq) (AppUserReviewsRes, error) {
+	return AppUserReviewsRes{}, nil
+}
+```
+
+`gx ctrl` 默认仍生成 `*Res` 签名以保持生成项目的兼容性；手写 Controller 可以按接口契约选择值或指针。
+
 ```go
 type CreateUserReq struct {
 	g.Meta `path:"/users/:id" method:"post" tags:"User" summary:"Create user"`

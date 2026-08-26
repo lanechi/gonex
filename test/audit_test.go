@@ -113,8 +113,98 @@ func (*invalidFileController) Upload(context.Context, *invalidFileRequest) (*hel
 
 type invalidResponseController struct{}
 
-func (*invalidResponseController) Read(context.Context, *helloRequest) (string, error) {
-	return "", nil
+func (*invalidResponseController) Read(context.Context, *helloRequest) (chan string, error) {
+	return nil, nil
+}
+
+type reviewItem struct {
+	ID int `json:"id"`
+}
+
+type appUserReviewsRes []reviewItem
+type reviewMapRes map[string]int
+type reviewCountRes int
+
+type flexibleResponseRequest struct {
+	g.Meta `path:"/flexible/list" method:"get"`
+}
+
+type flexibleResponsePointerRequest struct {
+	g.Meta `path:"/flexible/list-pointer" method:"get"`
+}
+
+type flexibleResponseMapRequest struct {
+	g.Meta `path:"/flexible/map" method:"get"`
+}
+
+type flexibleResponseMapPointerRequest struct {
+	g.Meta `path:"/flexible/map-pointer" method:"get"`
+}
+
+type flexibleResponseScalarRequest struct {
+	g.Meta `path:"/flexible/count" method:"get"`
+}
+
+type flexibleResponseController struct{}
+
+func (*flexibleResponseController) List(context.Context, *flexibleResponseRequest) (appUserReviewsRes, error) {
+	return appUserReviewsRes{{ID: 7}}, nil
+}
+
+func (*flexibleResponseController) ListPointer(context.Context, *flexibleResponsePointerRequest) (*appUserReviewsRes, error) {
+	value := appUserReviewsRes{{ID: 8}}
+	return &value, nil
+}
+
+func (*flexibleResponseController) Map(context.Context, *flexibleResponseMapRequest) (reviewMapRes, error) {
+	return reviewMapRes{"ok": 1}, nil
+}
+
+func (*flexibleResponseController) MapPointer(context.Context, *flexibleResponseMapPointerRequest) (*reviewMapRes, error) {
+	value := reviewMapRes{"ok": 2}
+	return &value, nil
+}
+
+func (*flexibleResponseController) Count(context.Context, *flexibleResponseScalarRequest) (reviewCountRes, error) {
+	return 3, nil
+}
+
+func TestControllerSupportsJSONResponseValuesAndPointers(t *testing.T) {
+	server := ghttp.NewServer(ghttp.WithLogger(&recordingLogger{}))
+	if err := server.Bind(&flexibleResponseController{}); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		path     string
+		contains string
+	}{
+		{"/flexible/list", `"id":7`},
+		{"/flexible/list-pointer", `"id":8`},
+		{"/flexible/map", `"ok":1`},
+		{"/flexible/map-pointer", `"ok":2`},
+		{"/flexible/count", `"data":3`},
+	}
+	for _, test := range tests {
+		response := httptest.NewRecorder()
+		server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, test.path, nil))
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), test.contains) {
+			t.Errorf("%s: status=%d body=%s", test.path, response.Code, response.Body.String())
+		}
+	}
+
+	operation := server.OpenAPI().Paths["/flexible/list"]["get"]
+	content := operation.Responses["200"].(map[string]any)["content"].(map[string]any)
+	schema := content["application/json"].(map[string]any)["schema"].(map[string]any)
+	data := schema["properties"].(map[string]any)["data"].(map[string]any)
+	if data["type"] != "array" || data["items"].(map[string]any)["type"] != "object" {
+		t.Fatalf("named slice response schema=%#v", data)
+	}
+	mapOperation := server.OpenAPI().Paths["/flexible/map"]["get"]
+	mapContent := mapOperation.Responses["200"].(map[string]any)["content"].(map[string]any)
+	mapSchema := mapContent["application/json"].(map[string]any)["schema"].(map[string]any)["properties"].(map[string]any)["data"].(map[string]any)
+	if mapSchema["type"] != "object" || mapSchema["additionalProperties"].(map[string]any)["type"] != "integer" {
+		t.Fatalf("named map response schema=%#v", mapSchema)
+	}
 }
 
 type documentationConflictRequest struct {
@@ -169,7 +259,7 @@ func TestBindRejectsInvalidRouteContractsWithoutPanicking(t *testing.T) {
 		{&extraPathController{}, "is not declared"},
 		{&invalidPathController{}, "wildcard must occupy"},
 		{&invalidFileController{}, "unsupported type"},
-		{&invalidResponseController{}, "pointer to a response struct"},
+		{&invalidResponseController{}, "JSON-encodable response type"},
 		{&documentationConflictController{}, "conflicts with registered route"},
 	}
 	for _, test := range tests {

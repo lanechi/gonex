@@ -10,7 +10,7 @@ description: 设计或修改 gonex API 的 g.Meta、请求来源、校验、响�
 ## 设计步骤
 
 1. 检查同模块、同版本 API 以及 Controller 绑定位置，确认真实路由前缀、命名和响应风格。
-2. 为每个 Controller 动作定义一对明确的 `*Req`、`*Res`；`Req` 必须嵌入一个带路由元数据的
+2. 为每个 Controller 动作定义明确的 `*Req` 和响应类型；`Req` 必须嵌入一个带路由元数据的
    `g.Meta`。
 3. 每个输入字段只选择真实 HTTP 来源：`path`、`query`、`header`、`cookie`、`json`、`form`
    或 `file`。不要在 Controller 中再次手工解析已声明字段。

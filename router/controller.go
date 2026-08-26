@@ -112,7 +112,7 @@ func ValidatePathBindings(path string, fields []FieldBinding) error {
 
 func validateControllerMethod(methodType reflect.Type) error {
 	if methodType.NumIn() != 2 {
-		return fmt.Errorf("expected func(context.Context, *Request) (*Response, error) or func(context.Context, *Request) error; got %s", methodType)
+		return fmt.Errorf("expected func(context.Context, *Request) (Response, error) or func(context.Context, *Request) error; got %s", methodType)
 	}
 	if methodType.In(0) != contextType {
 		return fmt.Errorf("first argument must be context.Context; got %s", methodType.In(0))
@@ -131,11 +131,31 @@ func validateControllerMethod(methodType reflect.Type) error {
 			return fmt.Errorf("second return value must be error; got %s", methodType.Out(1))
 		}
 		responseType := methodType.Out(0)
-		if responseType.Kind() != reflect.Ptr || responseType.Elem().Kind() != reflect.Struct {
-			return fmt.Errorf("first return value must be a pointer to a response struct; got %s", responseType)
+		if err := validateResponseType(responseType); err != nil {
+			return err
 		}
 	default:
 		return fmt.Errorf("expected one or two return values; got %d", methodType.NumOut())
 	}
 	return nil
+}
+
+func validateResponseType(responseType reflect.Type) error {
+	if responseType == errorType || responseType.Implements(errorType) {
+		return fmt.Errorf("first return value must be a JSON-encodable response type, not error; got %s", responseType)
+	}
+	responseKind := responseType
+	for responseKind.Kind() == reflect.Ptr {
+		responseKind = responseKind.Elem()
+	}
+	switch responseKind.Kind() {
+	case reflect.Array, reflect.Bool, reflect.Float32, reflect.Float64,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Map, reflect.Interface, reflect.Slice, reflect.String,
+		reflect.Struct, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32,
+		reflect.Uint64, reflect.Uintptr:
+		return nil
+	default:
+		return fmt.Errorf("first return value must be a JSON-encodable response type (value or pointer); got %s", responseType)
+	}
 }

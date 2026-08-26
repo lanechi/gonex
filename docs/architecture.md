@@ -179,6 +179,9 @@ Controller 的规范签名是：
 func (c *Controller) Action(ctx context.Context, req *ActionReq) (*ActionRes, error)
 ```
 
+请求仍必须是结构体指针；成功响应则允许任何可由 JSON 编码器处理的值或指针，包括命名 slice、map、标量、
+array、interface 和 struct。`gx` 默认生成指针响应签名，但运行时校验不再要求响应必须是 `*struct`。
+
 绑定来源分为两类：
 
 - `path`、`query`、`header`、`cookie`、`form`、`file` 会在注册阶段生成 `FieldBinding`；

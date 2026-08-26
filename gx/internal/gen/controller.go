@@ -160,7 +160,7 @@ func controllerMethodDecl(api API, controllerName string) *ast.FuncDecl {
 		}}},
 		Body: &ast.BlockStmt{List: []ast.Stmt{
 			&ast.ReturnStmt{Results: []ast.Expr{
-				&ast.UnaryExpr{Op: token.AND, X: &ast.CompositeLit{Type: selector(api.Package, api.ResponseType)}},
+				&ast.CallExpr{Fun: ast.NewIdent("new"), Args: []ast.Expr{selector(api.Package, api.ResponseType)}},
 				ast.NewIdent("nil"),
 			}},
 		}},

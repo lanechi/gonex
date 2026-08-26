@@ -23,7 +23,8 @@ func (*ControllerV1) Action(
 - 映射为领域输入，调用 `service.<Module>()`，再映射为公开响应。
 - 透传 `context.Context`，不要替换成 `context.Background()`。
 - 预期业务错误转换为带稳定业务码和 HTTP 状态的 `ghttp.Error`；保留 `Cause` 供日志和错误链使用。
-- 普通 JSON 成功响应只返回 `*Res`。只有文件、流、重定向、HTML 或特殊状态码才通过
+- 普通 JSON 成功响应可以返回 `Res` 或 `*Res`，也可以使用命名 slice、map、标量等 JSON 可编码类型；gx 默认
+  生成 `*Res`。只有文件、流、重定向、HTML 或特殊状态码才通过
   `ghttp.FromContext(ctx)` 直接写响应；写出后返回 `nil, nil`，避免第二份响应。
 
 ## 边界

@@ -108,6 +108,32 @@ type CreateRes struct{}
 	}
 }
 
+func TestControllerGeneratorInitializesAnyNamedResponseWithNew(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.26.0\n")
+	writeFile(t, filepath.Join(root, "api/review/v1/review.go"), `package v1
+
+import "github.com/lanechi/gonex/g"
+
+type ListReq struct { g.Meta `+"`path:\"/reviews\" method:\"get\"`"+` }
+type ListRes []string
+`)
+	project, err := gen.DiscoverProject(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gen.GenerateControllers(project, gen.ControllerOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	implementation, err := os.ReadFile(filepath.Join(root, "internal/controller/review/review_v1_review.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(implementation), "new(v1.ListRes)") {
+		t.Fatalf("named slice response was not initialized with new: %s", implementation)
+	}
+}
+
 func TestCanonicalDemoGenerationDryRun(t *testing.T) {
 	project, err := gen.DiscoverProject(filepath.Join(repositoryRoot(), "examples", "demo"))
 	if err != nil {

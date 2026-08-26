@@ -68,3 +68,15 @@ func TestOptionalQueryParameterUsesDefault(t *testing.T) {
 		t.Fatalf("default query parameter: status=%d body=%s", response.Code, response.Body.String())
 	}
 }
+
+func TestNamedSliceResponseValue(t *testing.T) {
+	server := ghttp.NewServer()
+	if err := server.Bind(&HelloController{}); err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/names", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"data":["gonex","gopher"]`) {
+		t.Fatalf("named slice response: status=%d body=%s", response.Code, response.Body.String())
+	}
+}

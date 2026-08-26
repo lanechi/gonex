@@ -130,6 +130,10 @@ gx ctrl user --dir /user/v1
 - `*_generated.go`：Controller 聚合与接口契约，可重生成；
 - 动作实现文件：首次创建后由开发者维护，生成器不会覆盖非生成内容。
 
+响应类型可以是 struct，也可以是命名 slice、map、标量或它们的指针；框架会交给统一 JSON 编码器处理。
+生成器默认使用 `*Res` 契约，并在新建动作实现中使用 `new(Res)` 初始化，因此命名 slice、map 和标量响应也能
+直接通过生成代码编译。
+
 命名模式还会首次创建 `api/<module>/<version>/*.go`。API 与动作实现不带 `DO NOT EDIT`，创建后
 由开发者补充真实参数和业务映射；后续使用扫描模式 `gx ctrl` 同步契约。
 

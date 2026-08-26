@@ -10,6 +10,7 @@
 - 将 query 参数绑定到请求结构体；
 - 验证 RouterGroup 前缀中的 path 参数可以绑定到请求结构体；
 - 验证可选 query 参数缺失时使用 `default`；
+- 验证命名 slice 值可以作为 Controller 响应；
 - 返回统一响应并自动生成 OpenAPI/Swagger。
 
 本目录是独立 module `github.com/lanechi/gonex/examples/basic`，通过 `go.mod` 中的本地
@@ -29,6 +30,7 @@ go run .
 ```text
 GET http://localhost:8000/hello
 GET http://localhost:8000/hello?name=Lane
+GET http://localhost:8000/names
 GET http://localhost:8000/openapi.json
 GET http://localhost:8000/docs/
 ```
