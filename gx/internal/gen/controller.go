@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 func GenerateControllers(project Project, options ControllerOptions) (Result, error) {
@@ -276,10 +277,27 @@ func goPackageName(value string) string {
 }
 
 func exportedIdentifier(value string) string {
-	if value == "" {
-		return ""
+	result := make([]rune, 0, len(value))
+	runes := []rune(value)
+	newWord := true
+	for index, character := range runes {
+		if character == '_' {
+			newWord = true
+			continue
+		}
+		if !newWord && unicode.IsUpper(character) {
+			previous := runes[index-1]
+			nextIsLower := index+1 < len(runes) && unicode.IsLower(runes[index+1])
+			newWord = unicode.IsLower(previous) || unicode.IsDigit(previous) || unicode.IsUpper(previous) && nextIsLower
+		}
+		if newWord {
+			result = append(result, unicode.ToUpper(character))
+			newWord = false
+			continue
+		}
+		result = append(result, unicode.ToLower(character))
 	}
-	return strings.ToUpper(value[:1]) + value[1:]
+	return string(result)
 }
 
 func toSnake(value string) string {

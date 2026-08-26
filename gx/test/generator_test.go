@@ -65,6 +65,55 @@ func (*sUser) Ping(context.Context) error { return nil }
 	}
 }
 
+func TestServiceGeneratorNormalizesModuleNames(t *testing.T) {
+	tests := []struct {
+		module string
+		name   string
+	}{
+		{module: "user_profile", name: "UserProfile"},
+		{module: "userProfile", name: "UserProfile"},
+		{module: "User_Profile", name: "UserProfile"},
+		{module: "User_profile", name: "UserProfile"},
+		// There is no word boundary to infer in these names, so keep the
+		// existing single-word result.
+		{module: "userprofile", name: "Userprofile"},
+		{module: "Userprofile", name: "Userprofile"},
+	}
+	for _, test := range tests {
+		t.Run(test.module, func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.26.0\n")
+			writeFile(t, filepath.Join(root, "internal/logic", test.module, "logic.go"), `package logic
+
+import "context"
+
+func Ping(context.Context) error { return nil }
+`)
+			project, err := gen.DiscoverProject(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := gen.GenerateServices(project, gen.ServiceOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			service, err := os.ReadFile(filepath.Join(root, "internal/service", test.module+".go"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			content := string(service)
+			for _, expected := range []string{
+				"type I" + test.name + " interface",
+				"func " + test.name + "() I" + test.name,
+				"func Register" + test.name + "(implementation I" + test.name,
+			} {
+				if !strings.Contains(content, expected) {
+					t.Errorf("generated service for %s does not contain %q:\n%s", test.module, expected, content)
+				}
+			}
+		})
+	}
+}
+
 func TestGeneratorsPreserveDeveloperImplementationAndSupportDryRun(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.26.0\n")
