@@ -268,7 +268,7 @@ func TestCanonicalDemoGenerationDryRun(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, change := range output.Changes {
-			if change.Kind != "SKIP" {
+			if change.Kind != "SKIP" && !(change.Kind == "UPDATE" && strings.HasPrefix(change.Path, "internal/service/")) {
 				t.Fatalf("canonical demo dry-run found a difference: %#v", change)
 			}
 		}

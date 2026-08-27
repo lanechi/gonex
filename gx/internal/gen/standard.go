@@ -187,7 +187,7 @@ func generateStandardService(project Project, options ServiceOptions) (Result, e
 	servicePath := filepath.Join(project.Resolve(options.Destination), module+".go")
 	modelImportPath := demoModelImportPath(project)
 	serviceSource := renderStandardService(resource, modelImportPath)
-	if err := writeForced(project, &result, servicePath, serviceSource, options.DryRun); err != nil {
+	if err := writeReplacing(project, &result, servicePath, serviceSource, options.DryRun); err != nil {
 		return result, err
 	}
 
