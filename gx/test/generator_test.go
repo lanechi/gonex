@@ -65,6 +65,25 @@ func (*sUser) Ping(context.Context) error { return nil }
 	}
 }
 
+func TestGeneratedAPIUsesLastDirectoryAsPackageName(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.26.0\n")
+	project, err := gen.DiscoverProject(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gen.GenerateControllers(project, gen.ControllerOptions{Name: "public/v1/page"}); err != nil {
+		t.Fatal(err)
+	}
+	api, err := os.ReadFile(filepath.Join(root, "api/public/v1/page.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(api), "package v1\n") {
+		t.Fatalf("generated API package should match the last directory: %s", api)
+	}
+}
+
 func TestServiceGeneratorNormalizesModuleNames(t *testing.T) {
 	tests := []struct {
 		module string

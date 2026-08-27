@@ -9,12 +9,19 @@
 *.dylib
 *.test
 *.out
-
+.codex
+.serena
 # Test and profiling output
 coverage.out
 coverage.html
+*.coverprofile
 *.prof
 *.pprof
+
+# Local database files created by tests and examples
+*.db
+*.sqlite
+*.sqlite3
 
 # Logs and temporary files
 *.log
@@ -29,11 +36,15 @@ coverage.html
 
 # Editors and operating system files
 .idea/
+.vscode/
+*.code-workspace
 *.swp
 *.swo
 *~
 .DS_Store
+Thumbs.db
 
 # Workspace files are not used by this project
 go.work
 go.work.sum
+tag.md

@@ -1,8 +1,26 @@
 # gonex 开发与协作规则
 
-本文件适用于整个 gonex 仓库。它定义代码边界、完成标准和验证要求；用户文档见
+本文件合并了原工作区级协作规则与 gonex 项目规则，适用于整个 gonex 仓库。它定义代码边界、完成标准和验证要求；用户文档见
 `README.md`，架构设计见 `docs/architecture.md`，面向 AI 的应用开发规则见
 `examples/demo/.agents/skills/`。
+
+## 仓库边界
+
+- 当前工作区只承载 `gonex/` 项目；本文件位于项目根目录。
+- Git 仓库与核心 Go module 为当前目录，module 为 `github.com/lanechi/gonex`。
+- `gx/` 是独立 Go module，提供 `gx` 代码生成 CLI。
+- `examples/*/` 和 `benchmarks/gx/` 均为独立 Go module。
+- 仓库没有根级 `go.work`；命令必须在目标 module 内执行。
+
+## Agent 分工
+
+项目级 `.codex/config.toml` 使用参考项目的调度模型和 3 个 agent 文件：
+
+- `planner-sol`：只读高级规划，负责架构、公共契约、跨 module、并发、安全和复杂根因。
+- `planner-terra`：只读常规规划，负责普通功能、多文件开发、一般重构和常规 Bug。
+- `executor-terra`：按已接受计划执行边界明确的实现、测试、生成器和文档变更。
+
+根会话和规划/执行代理必须遵守本文件；子代理不得递归派生任务。
 
 ## 项目定位
 

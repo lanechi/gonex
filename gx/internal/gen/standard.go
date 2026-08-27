@@ -20,15 +20,16 @@ type standardResource struct {
 // by `ctrl <name>`. Resource-specific fields can be added after creation.
 func standardCRUDAPIs(project Project, resource standardResource, sourceDir string) []API {
 	apiName := exportedIdentifier(resource.File)
+	packageName := apiPackageName(sourceDir)
 	basePath := "/" + resource.File
 	resourcePath := project.ModulePath + "/" + filepath.ToSlash(sourceDir)
 	source := filepath.ToSlash(filepath.Join(sourceDir, resource.File+".go"))
 	return []API{
-		{Module: resource.Module, Version: resource.Version, Package: resource.Version, Name: "Create" + apiName, ImportPath: resourcePath, RequestType: "Create" + apiName + "Req", ResponseType: "Create" + apiName + "Res", Source: source, Path: basePath, Method: "POST", Tags: []string{exportedIdentifier(resource.Module)}, Summary: "Create " + resource.File},
-		{Module: resource.Module, Version: resource.Version, Package: resource.Version, Name: "Update" + apiName, ImportPath: resourcePath, RequestType: "Update" + apiName + "Req", ResponseType: "Update" + apiName + "Res", Source: source, Path: basePath + "/:id", Method: "PUT", Tags: []string{exportedIdentifier(resource.Module)}, Summary: "Update " + resource.File},
-		{Module: resource.Module, Version: resource.Version, Package: resource.Version, Name: "Delete" + apiName, ImportPath: resourcePath, RequestType: "Delete" + apiName + "Req", ResponseType: "Delete" + apiName + "Res", Source: source, Path: basePath + "/:id", Method: "DELETE", Tags: []string{exportedIdentifier(resource.Module)}, Summary: "Delete " + resource.File},
-		{Module: resource.Module, Version: resource.Version, Package: resource.Version, Name: "GetOne" + apiName, ImportPath: resourcePath, RequestType: "GetOne" + apiName + "Req", ResponseType: "GetOne" + apiName + "Res", Source: source, Path: basePath + "/:id", Method: "GET", Tags: []string{exportedIdentifier(resource.Module)}, Summary: "Get one " + resource.File},
-		{Module: resource.Module, Version: resource.Version, Package: resource.Version, Name: "GetList" + apiName, ImportPath: resourcePath, RequestType: "GetList" + apiName + "Req", ResponseType: "GetList" + apiName + "Res", Source: source, Path: basePath, Method: "GET", Tags: []string{exportedIdentifier(resource.Module)}, Summary: "Get " + resource.File + " list"},
+		{Module: resource.Module, Version: resource.Version, Package: packageName, Name: "Create" + apiName, ImportPath: resourcePath, RequestType: "Create" + apiName + "Req", ResponseType: "Create" + apiName + "Res", Source: source, Path: basePath, Method: "POST", Tags: []string{exportedIdentifier(resource.Module)}, Summary: "Create " + resource.File},
+		{Module: resource.Module, Version: resource.Version, Package: packageName, Name: "Update" + apiName, ImportPath: resourcePath, RequestType: "Update" + apiName + "Req", ResponseType: "Update" + apiName + "Res", Source: source, Path: basePath + "/:id", Method: "PUT", Tags: []string{exportedIdentifier(resource.Module)}, Summary: "Update " + resource.File},
+		{Module: resource.Module, Version: resource.Version, Package: packageName, Name: "Delete" + apiName, ImportPath: resourcePath, RequestType: "Delete" + apiName + "Req", ResponseType: "Delete" + apiName + "Res", Source: source, Path: basePath + "/:id", Method: "DELETE", Tags: []string{exportedIdentifier(resource.Module)}, Summary: "Delete " + resource.File},
+		{Module: resource.Module, Version: resource.Version, Package: packageName, Name: "GetOne" + apiName, ImportPath: resourcePath, RequestType: "GetOne" + apiName + "Req", ResponseType: "GetOne" + apiName + "Res", Source: source, Path: basePath + "/:id", Method: "GET", Tags: []string{exportedIdentifier(resource.Module)}, Summary: "Get one " + resource.File},
+		{Module: resource.Module, Version: resource.Version, Package: packageName, Name: "GetList" + apiName, ImportPath: resourcePath, RequestType: "GetList" + apiName + "Req", ResponseType: "GetList" + apiName + "Res", Source: source, Path: basePath, Method: "GET", Tags: []string{exportedIdentifier(resource.Module)}, Summary: "Get " + resource.File + " list"},
 	}
 }
 
@@ -57,7 +58,7 @@ func generateStandardControllers(project Project, options ControllerOptions) (Re
 	}
 	apis := standardCRUDAPIs(project, resource, apiDirectory)
 	apiPath := filepath.Join(project.Resolve(apiDirectory), resource.File+".go")
-	apiSource := renderStandardAPI(resource, apis)
+	apiSource := renderStandardAPI(apiPackageName(apiDirectory), apis)
 	if err := writeDeveloperOwned(project, &result, apiPath, apiSource, "API definition", options.DryRun); err != nil {
 		return result, err
 	}
@@ -250,9 +251,13 @@ func resourceForDirectory(project Project, directory, name string) (standardReso
 	return standardResource{Module: toSnake(module), Version: version, File: resource.File}, nil
 }
 
-func renderStandardAPI(resource standardResource, apis []API) []byte {
+func apiPackageName(directory string) string {
+	return filepath.Base(filepath.Clean(directory))
+}
+
+func renderStandardAPI(packageName string, apis []API) []byte {
 	var builder strings.Builder
-	fmt.Fprintf(&builder, "package %s\n\nimport %q\n\n", resource.Version, "github.com/lanechi/gonex/g")
+	fmt.Fprintf(&builder, "package %s\n\nimport %q\n\n", packageName, "github.com/lanechi/gonex/g")
 	for _, api := range apis {
 		fmt.Fprintf(&builder, "type %s struct {\n", api.RequestType)
 		fmt.Fprintf(&builder, "\tg.Meta `path:\"%s\" method:\"%s\" tags:\"%s\" summary:\"%s\"`\n", api.Path, strings.ToLower(api.Method), strings.Join(api.Tags, ","), api.Summary)
