@@ -4,6 +4,7 @@
 
 | 目录 | 允许的职责 | 常见违规 |
 | --- | --- | --- |
+| `api/<module>/<module>.go` | 模块级 Controller 接口 | 数据库 Entity、业务事务、直接查询 |
 | `api/<module>/<version>` | HTTP 元数据、Req/Res、参数校验 | 数据库 Entity、业务事务、直接查询 |
 | `internal/controller/<module>` | API/领域映射、Service 调用、HTTP 错误 | 直接 DAO/GORM、可复用业务规则 |
 | `internal/service` | 由 Logic 签名生成的接口和注册入口 | 手写实现、直接编辑生成文件 |

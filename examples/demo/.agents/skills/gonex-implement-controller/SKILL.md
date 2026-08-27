@@ -34,7 +34,7 @@ Session、HTML 和底层 `net/http` 集成从 `ghttp.FromContext(ctx)` 获取；
 不要依赖 `Gin()`。
 
 修改实现前确认文件没有 `DO NOT EDIT` 标记。若契约缺少动作，先修改 API 并运行
-`gx ctrl --dry-run`、`gx ctrl`；不要手改 Controller 的 `*_generated.go`。
+`gx ctrl --dry-run`、`gx ctrl`；不要手改 Controller 的 `<module>.go` 或 `<module>_new.go`。
 
 ## 验证
 

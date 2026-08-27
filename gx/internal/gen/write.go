@@ -72,6 +72,45 @@ func writePlanned(project Project, result *Result, path string, source []byte, d
 	return nil
 }
 
+// writeForced writes generator-owned output even when an existing file does not
+// have the generated marker. Derived API and Service contracts must be replaced
+// when their source definitions change.
+func writeForced(project Project, result *Result, path string, source []byte, dryRun bool) error {
+	path = filepath.Clean(path)
+	relative, err := filepath.Rel(project.Root, path)
+	if err != nil {
+		return err
+	}
+	content, err := format.Source(source)
+	if err != nil {
+		return fmt.Errorf("format %s: %w", relative, err)
+	}
+	existing, readErr := os.ReadFile(path)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return fmt.Errorf("read %s: %w", relative, readErr)
+	}
+	if readErr == nil && bytes.Equal(existing, content) {
+		result.add("SKIP", relative, "unchanged")
+		return nil
+	}
+	kind := "CREATE"
+	if readErr == nil {
+		kind = "UPDATE"
+	}
+	if dryRun {
+		result.add(kind, relative, "generated output is always replaced")
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create directory for %s: %w", relative, err)
+	}
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", relative, err)
+	}
+	result.add(kind, relative, "generated output replaced")
+	return nil
+}
+
 // writeDeveloperOwned creates a seed file once and never replaces developer
 // content. Older gx versions marked these files as generated; when that exact
 // header is present, gx removes only the header and preserves the file body so

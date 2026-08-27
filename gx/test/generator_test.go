@@ -45,7 +45,8 @@ func (*sUser) Ping(context.Context) error { return nil }
 	}
 
 	for _, relative := range []string{
-		"internal/controller/user/user_v1_generated.go",
+		"internal/controller/user/user.go",
+		"internal/controller/user/user_new.go",
 		"internal/controller/user/user_v1_user.go",
 		"internal/service/user.go",
 		"internal/logic/logic.go",
@@ -75,12 +76,61 @@ func TestGeneratedAPIUsesLastDirectoryAsPackageName(t *testing.T) {
 	if _, err := gen.GenerateControllers(project, gen.ControllerOptions{Name: "public/v1/page"}); err != nil {
 		t.Fatal(err)
 	}
+	apiRoot, err := os.ReadFile(filepath.Join(root, "api/public/public.go"))
+	if err != nil {
+		t.Fatalf("module API package was not created: %v", err)
+	}
+	if !strings.Contains(string(apiRoot), "type IPublicV1 interface") {
+		t.Fatalf("module API interface was not generated: %s", apiRoot)
+	}
 	api, err := os.ReadFile(filepath.Join(root, "api/public/v1/page.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasPrefix(string(api), "package v1\n") {
 		t.Fatalf("generated API package should match the last directory: %s", api)
+	}
+	for _, relative := range []string{"internal/controller/public/public.go", "internal/controller/public/public_new.go"} {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(relative))); err != nil {
+			t.Fatalf("controller structure missing %s: %v", relative, err)
+		}
+	}
+	controller, _ := os.ReadFile(filepath.Join(root, "internal/controller/public/public.go"))
+	if strings.Contains(string(controller), "IPublicV1") {
+		t.Fatalf("controller contract should live in the API package: %s", controller)
+	}
+	constructor, _ := os.ReadFile(filepath.Join(root, "internal/controller/public/public_new.go"))
+	if !strings.Contains(string(constructor), "type ControllerV1 struct") || !strings.Contains(string(constructor), "func NewV1()") {
+		t.Fatalf("controller type and constructor were not generated together: %s", constructor)
+	}
+}
+
+func TestServiceGenerationReplacesExistingServiceFile(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.26.0\n")
+	writeFile(t, filepath.Join(root, "internal/logic/user/user.go"), `package user
+
+import "context"
+
+type sUser struct{}
+
+func (*sUser) Ping(context.Context) error { return nil }
+`)
+	servicePath := filepath.Join(root, "internal/service/user.go")
+	writeFile(t, servicePath, "package service\n\n// stale service\n")
+	project, err := gen.DiscoverProject(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gen.GenerateServices(project, gen.ServiceOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	service, err := os.ReadFile(servicePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(service), "stale service") || !strings.Contains(string(service), "type IUser interface") {
+		t.Fatalf("existing service was not replaced: %s", service)
 	}
 }
 

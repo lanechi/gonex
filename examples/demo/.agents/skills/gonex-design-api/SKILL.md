@@ -27,4 +27,4 @@ description: 设计或修改 gonex API 的 g.Meta、请求来源、校验、响�
 - 请求结构变化后必须重新运行 Controller 生成预览，并更新绑定、校验和 OpenAPI 测试。
 
 如果本地有 `gx`，只用它同步 Controller 契约，不把生成器当作 API 设计器。先修改开发者拥有的
-API 定义，再运行 `gx ctrl --dry-run` 和 `gx ctrl`。不要手改 `*_generated.go`。
+API 定义，再运行 `gx ctrl --dry-run` 和 `gx ctrl`。不要手改 Controller 的 `<module>.go` 或 `<module>_new.go`。

@@ -31,7 +31,7 @@ GET http://localhost:8000/docs/
 api/                         HTTP Req/Res、g.Meta 和参数校验
 config/                      Web Server 配置
 internal/cmd/                Cobra 命令与应用组合根
-internal/controller/         HTTP 边界和 gx Controller 契约
+internal/controller/         HTTP 边界和 gx Controller 契约（包文件、构造函数、动作实现）
 internal/database/           PostgreSQL 初始化与关闭
 internal/logic/              业务实现和注册聚合
 internal/service/            gx 生成的 Service 接口
@@ -52,7 +52,8 @@ gx ctrl
 gx service
 ```
 
-带 `Code generated ... DO NOT EDIT.` 的 Controller 契约、Service 和聚合文件由 gx 维护。API、
+带 `Code generated ... DO NOT EDIT.` 的 Controller 包文件、构造函数、Service 和聚合文件由 gx 维护；模块级 API 接口位于
+`api/<module>/<module>.go`。API 请求/响应、
 Controller 动作实现和 Logic 由开发者维护。新增完整资源时可调用 `$gonex-create-resource`；参数设计、
 Controller、Service 和审查也有对应项目 skill。
 

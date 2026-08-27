@@ -69,7 +69,7 @@ gx service --module user
 
 非 CRUD、已有模块新增动作或需要精确设计时：
 
-1. 手写开发者拥有的 `api/<module>/<version>/<action>.go`；
+1. 手写开发者拥有的 `api/<module>/<module>.go` 或 `api/<module>/<version>/<action>.go`；
 2. 运行 `gx ctrl --dry-run`，确认只更新契约并首次创建缺少的动作实现；
 3. 手写或扩展 `internal/logic/<module>` 的公开业务方法；
 4. 运行 `gx service --module <module> --dry-run`；
@@ -117,8 +117,9 @@ Controller 实现只承担 HTTP 边界。确认新 Controller 已传给 `Server.
 
 | 文件 | 默认所有者 | 修改方式 |
 | --- | --- | --- |
+| `api/<module>/<module>.go` | gx | 由 API 扫描结果维护接口；不要手改生成接口 |
 | `api/<module>/<version>/*.go` | 开发者 | 直接编辑；标准骨架仅首次创建 |
-| Controller `*_generated.go` | gx | 修改 API 后运行 `gx ctrl` |
+| Controller `<module>.go`、`<module>_new.go` | gx | 修改 API 后运行 `gx ctrl` |
 | Controller 动作实现 | 开发者 | 在首次生成文件中实现业务映射 |
 | `internal/logic/<module>/*.go` | 开发者 | 直接编辑公开业务方法 |
 | `internal/service/*.go` | gx | 修改 Logic 后运行 `gx service` |

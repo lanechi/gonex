@@ -55,7 +55,7 @@ func GenerateServices(project Project, options ServiceOptions) (Result, error) {
 			return result, err
 		}
 		path := filepath.Join(project.Resolve(options.Destination), module+".go")
-		if err := writePlanned(project, &result, path, source, options.DryRun); err != nil {
+		if err := writeForced(project, &result, path, source, options.DryRun); err != nil {
 			return result, err
 		}
 	}

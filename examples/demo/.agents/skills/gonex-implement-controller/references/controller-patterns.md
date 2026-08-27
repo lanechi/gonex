@@ -4,7 +4,7 @@
 
 `gx ctrl` 通常在 `internal/controller/<module>` 产生两类文件：
 
-- `<module>_<version>_generated.go`：Controller 类型、构造函数和接口契约，gx 拥有；
+- `<module>.go`、`<module>_new.go`：Controller 类型、构造函数和接口契约，gx 拥有；
 - `<module>_<version>_<action>.go`：动作实现，首次创建后由开发者维护。
 
 文件头存在 `DO NOT EDIT` 时不得手改，即使文件名看起来像实现文件。先修改 API，再运行生成器。

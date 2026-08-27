@@ -25,7 +25,7 @@ API Req/Res → Controller → gx 生成的 Service → Logic → PostgreSQL / �
 
 ## 代码边界
 
-- `api/<module>/<version>` 只定义 `g.Meta`、请求参数、校验和公开响应，不暴露数据库 Entity。
+- `api/<module>/<module>.go` 提供模块级 API 包；`api/<module>/<version>` 定义 `g.Meta`、请求参数、校验和公开响应，不暴露数据库 Entity。
 - Controller 只完成 API/领域映射、调用 Service 和转换 HTTP 错误，不直接访问 GORM。
 - Logic 持有业务规则、事务和数据访问编排，不依赖 API Req/Res、Gin 或 `ghttp.Context`。
 - Service 接口与 `internal/logic/logic.go` 由 `gx service` 维护。带

@@ -4,16 +4,7 @@
 
 package hello
 
-import (
-	"context"
-	"github.com/lanechi/gonex/examples/demo/api/hello/v1"
-)
-
-type IHelloV1 interface {
-	Hello(ctx context.Context, req *v1.HelloReq) (*v1.HelloRes, error)
-}
-type ControllerV1 struct {
-}
+type ControllerV1 struct{}
 
 func NewV1() *ControllerV1 {
 	return &ControllerV1{}

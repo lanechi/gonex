@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/format"
+	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
@@ -48,20 +49,52 @@ func GenerateControllers(project Project, options ControllerOptions) (Result, er
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	for _, key := range keys {
-		items := groups[key]
-		sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
-		module, version := items[0].Module, items[0].Version
+	moduleGroups := make(map[string]map[string][]API)
+	for key, items := range groups {
+		parts := strings.SplitN(key, "/", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		if moduleGroups[parts[0]] == nil {
+			moduleGroups[parts[0]] = make(map[string][]API)
+		}
+		moduleGroups[parts[0]][parts[1]] = items
+	}
+	modules := make([]string, 0, len(moduleGroups))
+	for module := range moduleGroups {
+		modules = append(modules, module)
+	}
+	sort.Strings(modules)
+	for _, module := range modules {
+		apiRootPath := filepath.Join(project.Resolve(options.Source), module, module+".go")
+		if err := writeForced(project, &result, apiRootPath, renderAPIContracts(moduleGroups[module], goPackageName(module), module), options.DryRun); err != nil {
+			return result, err
+		}
 		packageName := goPackageName(module)
-		generatedPath := filepath.Join(project.Resolve(options.Destination), module, module+"_"+version+"_generated.go")
+		generatedPath := filepath.Join(project.Resolve(options.Destination), module, module+".go")
 		expectedGenerated[filepath.Clean(generatedPath)] = struct{}{}
-		source, err := renderController(project, items, packageName, module, version)
+		source, err := renderControllerContracts(project, moduleGroups[module], packageName, module)
 		if err != nil {
 			return result, err
 		}
 		if err := writePlanned(project, &result, generatedPath, source, options.DryRun); err != nil {
 			return result, err
 		}
+		constructorPath := filepath.Join(project.Resolve(options.Destination), module, module+"_new.go")
+		expectedGenerated[filepath.Clean(constructorPath)] = struct{}{}
+		constructor, err := renderControllerConstructors(packageName, moduleGroups[module])
+		if err != nil {
+			return result, err
+		}
+		if err := writePlanned(project, &result, constructorPath, constructor, options.DryRun); err != nil {
+			return result, err
+		}
+	}
+	for _, key := range keys {
+		items := groups[key]
+		sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
+		module, version := items[0].Module, items[0].Version
+		packageName := goPackageName(module)
 		bySource := make(map[string][]API)
 		for _, api := range items {
 			bySource[api.Source] = append(bySource[api.Source], api)
@@ -92,40 +125,46 @@ func GenerateControllers(project Project, options ControllerOptions) (Result, er
 	return result, nil
 }
 
-func renderController(project Project, apis []API, packageName, module, version string) ([]byte, error) {
-	imports := map[string]string{"context": "context"}
-	for _, api := range apis {
-		imports[api.ImportPath] = api.Package
-	}
-	if err := validateImportNames(imports); err != nil {
-		return nil, err
-	}
-	file := &ast.File{Name: ast.NewIdent(packageName)}
-	file.Comments = nil
-	file.Decls = append(file.Decls, importDeclaration(imports))
-	interfaceFields := make([]*ast.Field, 0, len(apis))
-	for _, api := range apis {
-		interfaceFields = append(interfaceFields, &ast.Field{
-			Names: []*ast.Ident{ast.NewIdent(api.Name)},
-			Type: &ast.FuncType{
-				Params: &ast.FieldList{List: []*ast.Field{
-					{Names: []*ast.Ident{ast.NewIdent("ctx")}, Type: selector("context", "Context")},
-					{Names: []*ast.Ident{ast.NewIdent("req")}, Type: &ast.StarExpr{X: selector(api.Package, api.RequestType)}},
-				}},
-				Results: &ast.FieldList{List: []*ast.Field{
-					{Type: &ast.StarExpr{X: selector(api.Package, api.ResponseType)}},
-					{Type: ast.NewIdent("error")},
-				}},
-			},
-		})
-	}
-	interfaceName := "I" + exportedIdentifier(module) + exportedIdentifier(version)
+func renderControllerContract(project Project, apis []API, packageName, module, version string) ([]byte, error) {
+	return formatGeneratedFile(&ast.File{Name: ast.NewIdent(packageName)})
+}
+
+func renderControllerConstructor(packageName, version string) ([]byte, error) {
 	controllerName := "Controller" + exportedIdentifier(version)
+	file := &ast.File{Name: ast.NewIdent(packageName)}
 	file.Decls = append(file.Decls,
-		&ast.GenDecl{Tok: token.TYPE, Specs: []ast.Spec{&ast.TypeSpec{Name: ast.NewIdent(interfaceName), Type: &ast.InterfaceType{Methods: &ast.FieldList{List: interfaceFields}}}}},
 		&ast.GenDecl{Tok: token.TYPE, Specs: []ast.Spec{&ast.TypeSpec{Name: ast.NewIdent(controllerName), Type: &ast.StructType{Fields: &ast.FieldList{}}}}},
-		&ast.FuncDecl{Name: ast.NewIdent("New" + exportedIdentifier(version)), Type: &ast.FuncType{Results: &ast.FieldList{List: []*ast.Field{{Type: &ast.StarExpr{X: ast.NewIdent(controllerName)}}}}}, Body: &ast.BlockStmt{List: []ast.Stmt{&ast.ReturnStmt{Results: []ast.Expr{&ast.UnaryExpr{Op: token.AND, X: &ast.CompositeLit{Type: ast.NewIdent(controllerName)}}}}}}},
+		&ast.FuncDecl{
+			Name: ast.NewIdent("New" + exportedIdentifier(version)),
+			Type: &ast.FuncType{Results: &ast.FieldList{List: []*ast.Field{{Type: &ast.StarExpr{X: ast.NewIdent(controllerName)}}}}},
+			Body: &ast.BlockStmt{List: []ast.Stmt{&ast.ReturnStmt{Results: []ast.Expr{&ast.UnaryExpr{Op: token.AND, X: &ast.CompositeLit{Type: ast.NewIdent(controllerName)}}}}}},
+		},
 	)
+	return formatGeneratedFile(file)
+}
+
+func renderControllerContracts(project Project, byVersion map[string][]API, packageName, module string) ([]byte, error) {
+	return formatGeneratedFile(&ast.File{Name: ast.NewIdent(packageName)})
+}
+
+func renderControllerConstructors(packageName string, byVersion map[string][]API) ([]byte, error) {
+	versions := make([]string, 0, len(byVersion))
+	for version := range byVersion {
+		versions = append(versions, version)
+	}
+	sort.Strings(versions)
+	file := &ast.File{Name: ast.NewIdent(packageName)}
+	for _, version := range versions {
+		source, err := renderControllerConstructor(packageName, version)
+		if err != nil {
+			return nil, err
+		}
+		constructor, err := parser.ParseFile(token.NewFileSet(), "new.go", source, parser.ParseComments)
+		if err != nil {
+			return nil, err
+		}
+		file.Decls = append(file.Decls, constructor.Decls...)
+	}
 	return formatGeneratedFile(file)
 }
 
@@ -209,7 +248,7 @@ func cleanStaleGeneratedContracts(project Project, destination string, expected 
 			}
 			return walkErr
 		}
-		if info.IsDir() || !strings.HasSuffix(info.Name(), "_generated.go") {
+		if info.IsDir() || !isControllerContractFilename(info.Name()) {
 			return nil
 		}
 		if _, exists := expected[filepath.Clean(path)]; exists {
@@ -240,6 +279,10 @@ func cleanStaleGeneratedContracts(project Project, destination string, expected 
 		return fmt.Errorf("scan stale generated files: %w", err)
 	}
 	return nil
+}
+
+func isControllerContractFilename(name string) bool {
+	return strings.HasSuffix(name, "_generated.go") || (strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_new.go"))
 }
 
 func selector(packageName, name string) *ast.SelectorExpr {

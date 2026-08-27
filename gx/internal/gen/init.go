@@ -286,8 +286,9 @@ func validateDemo(root string) error {
 		".codex/agents/explorer.toml", ".codex/agents/tester.toml",
 		".agents/skills/gonex-create-resource/SKILL.md", ".agents/skills/gonex-design-api/SKILL.md",
 		".agents/skills/gonex-implement-controller/SKILL.md", ".agents/skills/gonex-implement-service/SKILL.md",
-		".agents/skills/gonex-review-project/SKILL.md", "api/hello/v1/hello.go",
+		".agents/skills/gonex-review-project/SKILL.md", "api/hello/hello.go", "api/hello/v1/hello.go",
 		"internal/database/database.go", "internal/cmd/cmd.go", "internal/cmd/root.go",
+		"internal/controller/hello/hello.go", "internal/controller/hello/hello_new.go",
 		"internal/controller/hello/hello_v1_hello.go", "internal/logic/hello/hello.go", "internal/service/hello.go",
 	} {
 		info, err := os.Stat(filepath.Join(root, relative))

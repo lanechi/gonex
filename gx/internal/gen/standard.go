@@ -57,6 +57,11 @@ func generateStandardControllers(project Project, options ControllerOptions) (Re
 		apiDirectory = filepath.Join(options.Source, resource.Module, resource.Version)
 	}
 	apis := standardCRUDAPIs(project, resource, apiDirectory)
+	apiRootDir := options.Source
+	if explicitSource {
+		apiRootDir = filepath.Dir(filepath.Dir(options.Source))
+	}
+	apiRootPath := filepath.Join(project.Resolve(apiRootDir), resource.Module, resource.Module+".go")
 	apiPath := filepath.Join(project.Resolve(apiDirectory), resource.File+".go")
 	apiSource := renderStandardAPI(apiPackageName(apiDirectory), apis)
 	if err := writeDeveloperOwned(project, &result, apiPath, apiSource, "API definition", options.DryRun); err != nil {
@@ -68,12 +73,37 @@ func generateStandardControllers(project Project, options ControllerOptions) (Re
 	}
 
 	packageName := goPackageName(resource.Module)
-	generatedPath := filepath.Join(project.Resolve(options.Destination), resource.Module, resource.Module+"_"+resource.Version+"_generated.go")
-	contract, err := renderController(project, contractAPIs, packageName, resource.Module, resource.Version)
+	generatedPath := filepath.Join(project.Resolve(options.Destination), resource.Module, resource.Module+".go")
+	contractGroups := map[string][]API{resource.Version: contractAPIs}
+	if !explicitSource {
+		if allAPIs, scanErr := scanAPIs(project, options.Source); scanErr == nil {
+			contractGroups = make(map[string][]API)
+			for _, api := range allAPIs {
+				if api.Module == resource.Module {
+					contractGroups[api.Version] = append(contractGroups[api.Version], api)
+				}
+			}
+			if len(contractGroups) == 0 {
+				contractGroups[resource.Version] = contractAPIs
+			}
+		}
+	}
+	if err := writeForced(project, &result, apiRootPath, renderAPIContracts(contractGroups, resource.Module, resource.Module), options.DryRun); err != nil {
+		return result, err
+	}
+	contract, err := renderControllerContracts(project, contractGroups, packageName, resource.Module)
 	if err != nil {
 		return result, err
 	}
 	if err := writePlanned(project, &result, generatedPath, contract, options.DryRun); err != nil {
+		return result, err
+	}
+	constructorPath := filepath.Join(project.Resolve(options.Destination), resource.Module, resource.Module+"_new.go")
+	constructor, err := renderControllerConstructors(packageName, contractGroups)
+	if err != nil {
+		return result, err
+	}
+	if err := writePlanned(project, &result, constructorPath, constructor, options.DryRun); err != nil {
 		return result, err
 	}
 
@@ -157,7 +187,7 @@ func generateStandardService(project Project, options ServiceOptions) (Result, e
 	servicePath := filepath.Join(project.Resolve(options.Destination), module+".go")
 	modelImportPath := demoModelImportPath(project)
 	serviceSource := renderStandardService(resource, modelImportPath)
-	if err := writePlanned(project, &result, servicePath, serviceSource, options.DryRun); err != nil {
+	if err := writeForced(project, &result, servicePath, serviceSource, options.DryRun); err != nil {
 		return result, err
 	}
 
@@ -266,6 +296,44 @@ func renderStandardAPI(packageName string, apis []API) []byte {
 		}
 		builder.WriteString("}\n\n")
 		fmt.Fprintf(&builder, "type %s struct{}\n\n", api.ResponseType)
+	}
+	return []byte(builder.String())
+}
+
+// renderAPIContracts places the versioned API interfaces in the module-level
+// API package, matching the public layout used by the demo project.
+func renderAPIContracts(byVersion map[string][]API, packageName, module string) []byte {
+	versions := make([]string, 0, len(byVersion))
+	imports := make(map[string]string)
+	for version, apis := range byVersion {
+		versions = append(versions, version)
+		for _, api := range apis {
+			imports[api.ImportPath] = api.Package
+		}
+	}
+	sort.Strings(versions)
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "package %s\n\n", packageName)
+	if len(imports) > 0 {
+		builder.WriteString("import (\n\t\"context\"\n\n")
+		paths := make([]string, 0, len(imports))
+		for path := range imports {
+			paths = append(paths, path)
+		}
+		sort.Strings(paths)
+		for _, path := range paths {
+			fmt.Fprintf(&builder, "\t%s %q\n", imports[path], path)
+		}
+		builder.WriteString(")\n\n")
+	}
+	for _, version := range versions {
+		apis := append([]API(nil), byVersion[version]...)
+		sort.Slice(apis, func(left, right int) bool { return apis[left].Name < apis[right].Name })
+		fmt.Fprintf(&builder, "type I%s%s interface {\n", exportedIdentifier(module), exportedIdentifier(version))
+		for _, api := range apis {
+			fmt.Fprintf(&builder, "\t%s(ctx context.Context, req *%s.%s) (*%s.%s, error)\n", api.Name, api.Package, api.RequestType, api.Package, api.ResponseType)
+		}
+		builder.WriteString("}\n\n")
 	}
 	return []byte(builder.String())
 }
