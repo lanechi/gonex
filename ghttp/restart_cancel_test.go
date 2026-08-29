@@ -63,3 +63,25 @@ func TestRestartDetectsRequestContextOwnedByServer(t *testing.T) {
 		t.Fatal("request context from another server was treated as local")
 	}
 }
+
+func TestRestartRejectsAnotherAttemptAfterHandoff(t *testing.T) {
+	server := NewServer()
+	manager, ok := server.restartManager.(*serverRestartManager)
+	if !ok {
+		t.Fatalf("default restart manager = %T", server.restartManager)
+	}
+	manager.mu.Lock()
+	manager.handedOff = true
+	manager.mu.Unlock()
+
+	if err := manager.Restart(context.Background()); !errors.Is(err, ErrRestartHandedOff) {
+		t.Fatalf("Restart after handoff error = %v, want ErrRestartHandedOff", err)
+	}
+	manager.mu.Lock()
+	running := manager.running
+	attempt := manager.attempt
+	manager.mu.Unlock()
+	if running || attempt != nil {
+		t.Fatalf("post-handoff restart published runtime state: running=%v attempt=%v", running, attempt != nil)
+	}
+}
