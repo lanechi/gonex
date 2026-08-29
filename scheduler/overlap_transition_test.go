@@ -1,6 +1,8 @@
 package scheduler
 
 import (
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -58,17 +60,21 @@ func TestAcceptedQueueSurvivesPolicyChange(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	activeDone := make(chan struct{})
+	var enteredOnce sync.Once
+	var runs atomic.Int32
+
+	handler := func() {
+		runs.Add(1)
+		enteredOnce.Do(func() { close(entered) })
+		<-release
+	}
 	go func() {
-		gate.run(func() {
-			close(entered)
-			<-release
-		})
+		gate.run(handler)
 		close(activeDone)
 	}()
 	<-entered
 
-	queuedRan := make(chan struct{}, 1)
-	executed, queued := gate.run(func() { queuedRan <- struct{}{} })
+	executed, queued := gate.run(func() { t.Fatal("same-generation queued trigger executed its caller handler") })
 	if executed || !queued {
 		t.Fatalf("queued trigger executed=%t queued=%t, want false/true", executed, queued)
 	}
@@ -76,13 +82,14 @@ func TestAcceptedQueueSurvivesPolicyChange(t *testing.T) {
 	close(release)
 
 	select {
-	case <-queuedRan:
-	case <-time.After(time.Second):
-		t.Fatal("accepted queued trigger was dropped by policy change")
-	}
-	select {
 	case <-activeDone:
 	case <-time.After(time.Second):
 		t.Fatal("active execution did not finish")
+	}
+	if runs.Load() != 2 {
+		t.Fatalf("accepted queued trigger runs=%d, want 2", runs.Load())
+	}
+	if gate.isRunning() {
+		t.Fatal("overlap gate remained active after queued replay completed")
 	}
 }
