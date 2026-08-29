@@ -315,17 +315,23 @@ func (current *managedSession) Logout() error {
 	if current.loggedOut {
 		return nil
 	}
-	// Do not publish a local logout if the authoritative storage/revocation
-	// operation failed. Keeping the current state and cookie lets the caller
-	// retry instead of reporting logout while a replayable token still exists.
+	cookieManager := current.context.Cookie()
+	prepared, err := cookieManager.prepareDelete(current.manager.cookieName, current.manager.CookieOptions())
+	if err != nil {
+		return err
+	}
+	// Cookie publication is preflighted before the authoritative delete/revoke.
+	// If the response can no longer accept Set-Cookie, logout fails without
+	// creating a half-committed server/client state. Once deletion succeeds,
+	// writePrepared is infallible within the current response abstraction.
 	if err := current.manager.delete(current.context, current.id); err != nil {
 		return err
 	}
-	cookieErr := current.context.Cookie().Delete(current.manager.cookieName, current.manager.CookieOptions())
+	cookieManager.writePrepared(prepared)
 	current.values = make(map[string]any)
 	current.id = ""
 	current.family = ""
 	current.loggedOut = true
 	current.context.evictSession(current)
-	return cookieErr
+	return nil
 }
