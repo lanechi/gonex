@@ -558,10 +558,11 @@ func TestOpenAPIConstraintsEmbeddedSchemaAndSwaggerEscaping(t *testing.T) {
 
 func TestRouteRegistryDeepSnapshot(t *testing.T) {
 	registry := router.NewRegistry()
-	binder := &router.Binder{Fields: []router.FieldBinding{{Index: []int{1}, Query: "page"}}}
-	if err := registry.Register(router.RouteMetadata{Method: http.MethodGet, Path: "/snapshot", Bindings: binder.Fields}); err != nil {
+	bindings := []router.FieldBinding{{Index: []int{1}, Query: "page"}}
+	if err := registry.Register(router.RouteMetadata{Method: http.MethodGet, Path: "/snapshot", Bindings: bindings}); err != nil {
 		t.Fatal(err)
 	}
+	bindings[0].Index[0] = 7
 	snapshot := registry.List()
 	snapshot[0].Bindings[0].Index[0] = 99
 	if got := registry.List()[0].Bindings[0].Index[0]; got != 1 {
