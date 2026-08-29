@@ -81,9 +81,9 @@ func (server *Server) applyConfig() {
 		}
 	}
 	if !server.options.ShutdownTimeout.Set {
-		if value, ok := configDuration(get("server.shutdownTimeout")); ok {
-			if value <= 0 {
-				server.addInitializationError(fmt.Errorf("server.shutdownTimeout must be greater than zero"))
+		if raw := get("server.shutdownTimeout"); raw != nil {
+			if value, ok := configDuration(raw); !ok {
+				server.addInitializationError(fmt.Errorf("server.shutdownTimeout must be a valid duration greater than zero"))
 			} else {
 				server.shutdownTimeout = value
 			}
