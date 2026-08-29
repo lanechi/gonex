@@ -37,10 +37,22 @@ func requestLoggerMiddleware(server *Server) gin.HandlerFunc {
 		context.Next()
 	}
 }
-func requestBodyLimitMiddleware(server *Server) gin.HandlerFunc {
-	return middleware.BodyLimit(server.maxBodyBytes)
+
+func frameworkFailureHandler(server *Server) middleware.FailureHandler {
+	return func(context *gin.Context, status, code int, message string) {
+		frameworkContext := newContext(context)
+		frameworkContext.server = server
+		frameworkContext.logger = requestLoggerFromGin(server, context)
+		server.handleError(frameworkContext, NewError(code, status, message))
+	}
 }
+
+func requestBodyLimitMiddleware(server *Server) gin.HandlerFunc {
+	return middleware.BodyLimit(server.maxBodyBytes, frameworkFailureHandler(server))
+}
+
 func hostValidationMiddleware(server *Server) gin.HandlerFunc {
+	failure := frameworkFailureHandler(server)
 	return func(context *gin.Context) {
 		server.settingsMu.RLock()
 		allowed := append([]string(nil), server.allowedHosts...)
@@ -50,9 +62,10 @@ func hostValidationMiddleware(server *Server) gin.HandlerFunc {
 			return
 		}
 		context.Abort()
-		context.JSON(http.StatusMisdirectedRequest, map[string]any{"code": 42100, "message": "invalid host"})
+		failure(context, http.StatusMisdirectedRequest, 42100, "invalid host")
 	}
 }
+
 func csrfMiddleware(server *Server) gin.HandlerFunc {
 	return func(context *gin.Context) {
 		server.settingsMu.RLock()
