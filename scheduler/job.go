@@ -59,7 +59,7 @@ type JobInfo struct {
 	Running  bool
 }
 
-// Scheduler is the engine-independent contract managed by ghttp.Server.
+// Scheduler is the engine-independent runtime contract managed by ghttp.Server.
 type Scheduler interface {
 	Start(context.Context) error
 	Stop()
@@ -68,4 +68,14 @@ type Scheduler interface {
 	Remove(name string) error
 	Jobs() []JobInfo
 	Use(...Middleware) error
+}
+
+// MutableScheduler extends Scheduler with the deterministic validation and
+// replacement semantics required by persistent reconciliation. Replace must
+// preserve per-job overlap state across generations and must leave the old job
+// installed if the replacement cannot be committed.
+type MutableScheduler interface {
+	Scheduler
+	Validate(Job) error
+	Replace(Job) error
 }
