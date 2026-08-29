@@ -155,6 +155,12 @@ func TestInvalidConfigValuesFailInitialization(t *testing.T) {
 	for _, test := range tests {
 		configuration := config.New()
 		configuration.Set(test.key, test.value)
+		if test.key == "session.storage.type" && test.value == "cookie" {
+			// This case is specifically testing the missing/weak secret error.
+			// Satisfy the independent revocation-store requirement so the test
+			// reaches the intended validation branch.
+			configuration.Set("session.storage.revocation", "memory")
+		}
 		if strings.HasPrefix(test.key, "csrf.") {
 			configuration.Set("csrf.enabled", true)
 		}
