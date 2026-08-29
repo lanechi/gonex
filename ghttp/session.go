@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lanechi/gonex/internal/sessionvalue"
 	"github.com/lanechi/gonex/session"
 )
 
@@ -84,6 +85,11 @@ func (manager *SessionManager) Open(ctx *Context) (session.Session, error) {
 			newID = true
 		} else if err != nil {
 			return nil, err
+		} else {
+			values, err = sessionvalue.NormalizeMap(values)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	if newID {
@@ -200,92 +206,101 @@ type managedSession struct {
 	loggedOut bool
 }
 
-func (session *managedSession) Get(key string) (any, error) {
-	session.mu.RLock()
-	defer session.mu.RUnlock()
-	if session.loggedOut {
+func (current *managedSession) Get(key string) (any, error) {
+	current.mu.RLock()
+	defer current.mu.RUnlock()
+	if current.loggedOut {
 		return nil, nil
 	}
-	value, ok := session.values[key]
+	value, ok := current.values[key]
 	if !ok {
 		return nil, nil
 	}
-	return value, nil
+	return sessionvalue.Clone(value), nil
 }
 
-func (session *managedSession) Set(key string, value any) error {
-	session.mu.Lock()
-	defer session.mu.Unlock()
-	if session.loggedOut {
+func (current *managedSession) Set(key string, value any) error {
+	normalized, err := sessionvalue.Normalize(value)
+	if err != nil {
+		return err
+	}
+	current.mu.Lock()
+	defer current.mu.Unlock()
+	if current.loggedOut {
 		return errors.New("session is logged out; reopen it from the request context")
 	}
-	previous, existed := session.values[key]
-	session.values[key] = value
-	if err := session.manager.persist(session); err != nil {
+	previous, existed := current.values[key]
+	current.values[key] = normalized
+	if err := current.manager.persist(current); err != nil {
 		if existed {
-			session.values[key] = previous
+			current.values[key] = previous
 		} else {
-			delete(session.values, key)
+			delete(current.values, key)
 		}
 		return err
 	}
 	return nil
 }
-func (session *managedSession) Delete(key string) error {
-	session.mu.Lock()
-	defer session.mu.Unlock()
-	if session.loggedOut {
+
+func (current *managedSession) Delete(key string) error {
+	current.mu.Lock()
+	defer current.mu.Unlock()
+	if current.loggedOut {
 		return errors.New("session is logged out; reopen it from the request context")
 	}
-	previous, existed := session.values[key]
-	delete(session.values, key)
-	if err := session.manager.persist(session); err != nil {
+	previous, existed := current.values[key]
+	delete(current.values, key)
+	if err := current.manager.persist(current); err != nil {
 		if existed {
-			session.values[key] = previous
+			current.values[key] = previous
 		}
 		return err
 	}
 	return nil
 }
-func (session *managedSession) Clear() error {
-	session.mu.Lock()
-	defer session.mu.Unlock()
-	if session.loggedOut {
+
+func (current *managedSession) Clear() error {
+	current.mu.Lock()
+	defer current.mu.Unlock()
+	if current.loggedOut {
 		return errors.New("session is logged out; reopen it from the request context")
 	}
-	previous := session.values
-	session.values = make(map[string]any)
-	if err := session.manager.persist(session); err != nil {
-		session.values = previous
+	previous := current.values
+	current.values = make(map[string]any)
+	if err := current.manager.persist(current); err != nil {
+		current.values = previous
 		return err
 	}
 	return nil
 }
-func (session *managedSession) ID() string {
-	session.mu.RLock()
-	defer session.mu.RUnlock()
-	return session.id
+
+func (current *managedSession) ID() string {
+	current.mu.RLock()
+	defer current.mu.RUnlock()
+	return current.id
 }
-func (session *managedSession) Regenerate() error {
-	session.mu.Lock()
-	defer session.mu.Unlock()
-	if session.loggedOut {
+
+func (current *managedSession) Regenerate() error {
+	current.mu.Lock()
+	defer current.mu.Unlock()
+	if current.loggedOut {
 		return errors.New("session is logged out; reopen it from the request context")
 	}
-	return session.manager.regenerate(session)
+	return current.manager.regenerate(current)
 }
-func (session *managedSession) Logout() error {
-	session.mu.Lock()
-	defer session.mu.Unlock()
-	if session.loggedOut {
+
+func (current *managedSession) Logout() error {
+	current.mu.Lock()
+	defer current.mu.Unlock()
+	if current.loggedOut {
 		return nil
 	}
-	storageErr := session.manager.delete(session.context, session.id)
-	cookieErr := session.context.Cookie().Delete(session.manager.cookieName, session.manager.CookieOptions())
-	session.values = make(map[string]any)
-	session.id = ""
-	session.family = ""
-	session.loggedOut = true
-	session.context.evictSession(session)
+	storageErr := current.manager.delete(current.context, current.id)
+	cookieErr := current.context.Cookie().Delete(current.manager.cookieName, current.manager.CookieOptions())
+	current.values = make(map[string]any)
+	current.id = ""
+	current.family = ""
+	current.loggedOut = true
+	current.context.evictSession(current)
 	return errors.Join(storageErr, cookieErr)
 }
