@@ -9,21 +9,16 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const defaultMultipartMemory = 32 << 20
+
 // NewBinder creates a reusable binding plan for a pointer-to-struct request.
 func NewBinder(requestType reflect.Type) (*Binder, error) {
 	if requestType == nil || requestType.Kind() != reflect.Ptr || requestType.Elem().Kind() != reflect.Struct {
 		return nil, fmt.Errorf("request type must be a pointer to a struct")
 	}
-	binder := &Binder{MaxMultipartMemory: 32 << 20}
+	binder := &Binder{}
 	if err := collectFieldBindings(requestType.Elem(), nil, &binder.fields); err != nil {
 		return nil, err
-	}
-	binder.Fields = cloneFieldBindings(binder.fields)
-	for _, field := range binder.fields {
-		if field.Query != "" {
-			binder.hasQuery = true
-			break
-		}
 	}
 	binder.hasBindingRules = hasValidationTag(requestType.Elem(), "binding", make(map[reflect.Type]struct{}))
 	binder.hasValidateRules = hasValidationTag(requestType.Elem(), "validate", make(map[reflect.Type]struct{}))
@@ -36,9 +31,18 @@ func (binder *Binder) HasBindingRules() bool { return binder != nil && binder.ha
 // HasValidateRules reports whether validate tags were declared.
 func (binder *Binder) HasValidateRules() bool { return binder != nil && binder.hasValidateRules }
 
-// Bind applies the compiled plan to target. JSON uses the request Content-Type;
-// scalar sources use the FieldBinding plan and default values.
-func (binder *Binder) Bind(ginContext *gin.Context, target any) error {
+// Bind applies the compiled plan to target. maxMultipartMemory is supplied by
+// the server at execution time so a Binder never carries mutable server state.
+func (binder *Binder) Bind(ginContext *gin.Context, target any, maxMultipartMemory int64) error {
+	if binder == nil {
+		return fmt.Errorf("request binder is nil")
+	}
+	if ginContext == nil || ginContext.Request == nil {
+		return fmt.Errorf("request context is nil")
+	}
+	if maxMultipartMemory <= 0 {
+		maxMultipartMemory = defaultMultipartMemory
+	}
 	request := ginContext.Request
 	targetValue := reflect.ValueOf(target)
 	if !targetValue.IsValid() || targetValue.Kind() != reflect.Ptr || targetValue.IsNil() {
@@ -51,7 +55,7 @@ func (binder *Binder) Bind(ginContext *gin.Context, target any) error {
 	if err := bindJSON(request, target, contentType); err != nil {
 		return err
 	}
-	if err := parseFormBody(request, binder.MaxMultipartMemory, contentType); err != nil {
+	if err := parseFormBody(request, maxMultipartMemory, contentType); err != nil {
 		return err
 	}
 	return binder.bindSources(ginContext, targetValue.Elem())
