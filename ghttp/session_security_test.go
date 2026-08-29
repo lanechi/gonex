@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/lanechi/gonex/session"
 )
 
@@ -54,16 +55,16 @@ func TestSessionCookieOptionsRejectInsecureSameSiteNone(t *testing.T) {
 func TestSessionRegenerateRollsBackWhenOldIDCannotBeDeleted(t *testing.T) {
 	storage := &failingDeleteStorage{values: make(map[string]map[string]any)}
 	manager := NewSessionManager(storage, "session_id", time.Hour)
-
-	engine := NewServer(WithSessionManager(manager))
-	if err := engine.Err(); err != nil {
+	server := NewServer(WithSessionManager(manager))
+	if err := server.Err(); err != nil {
 		t.Fatal(err)
 	}
+
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/", nil)
-	ginContext, _ := createTestContext(recorder, request)
+	ginContext, _ := gin.CreateTestContext(recorder)
+	ginContext.Request = httptest.NewRequest(http.MethodGet, "/", nil)
 	ctx := newContext(ginContext)
-	ctx.server = engine
+	ctx.server = server
 	ctx.sessionManager = manager
 
 	opened, err := manager.Open(ctx)
