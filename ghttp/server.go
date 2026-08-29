@@ -41,6 +41,7 @@ type Server struct {
 	customBindingValidator  bool
 	customValidateValidator bool
 	logger                  logging.Logger
+	loggerOwned             bool
 	config                  Config
 	mode                    string
 	debug                   bool
@@ -89,9 +90,11 @@ func newServerDefaults(configuration Config) *Server {
 	}
 	if logger := logging.InitialLogger(); logger != nil {
 		server.logger = logger
+		server.loggerOwned = false
 		server.options.Logger = optional[logging.Logger]{Value: server.logger, Set: true}
 	} else {
 		server.logger = logging.NewDefaultLogger()
+		server.loggerOwned = true
 	}
 	server.sessionManager = NewSessionManager(nil, "session_id", 24*time.Hour)
 	server.templates = template.New()
@@ -253,12 +256,16 @@ func (server *Server) RestartManager() RestartManager {
 	return server.restartManager
 }
 
-// SetTemplateRoot configures and loads the server template directory.
+// SetTemplateRoot configures and loads the server template directory. The
+// Server option is published only after the template manager accepts the root.
 func (server *Server) SetTemplateRoot(root string) error {
+	if err := server.templates.SetRoot(root); err != nil {
+		return err
+	}
 	server.settingsMu.Lock()
 	server.options.TemplateRoot = optional[string]{Value: root, Set: true}
 	server.settingsMu.Unlock()
-	return server.templates.SetRoot(root)
+	return nil
 }
 
 // SetTrustedProxies configures which proxies Gin may trust for client IP
@@ -351,13 +358,25 @@ func (server *Server) Templates() *template.Manager {
 	return server.templates
 }
 
-func (server *Server) beginRun() error {
+// beginRun atomically claims the running state and applies an optional address
+// override. Keeping both operations in one critical section prevents concurrent
+// Run calls from observing or starting with another caller's address.
+func (server *Server) beginRun(address ...string) error {
+	if len(address) > 1 {
+		return fmt.Errorf("beginRun accepts at most one address")
+	}
 	server.registrationMu.Lock()
 	defer server.registrationMu.Unlock()
 	server.stateMu.Lock()
 	defer server.stateMu.Unlock()
 	if server.running {
 		return ErrServerRunning
+	}
+	if len(address) == 1 {
+		if override := strings.TrimSpace(address[0]); override != "" {
+			server.address = override
+			server.httpServer.Addr = override
+		}
 	}
 	server.running = true
 	return nil
@@ -400,18 +419,16 @@ func (server *Server) addInitializationError(err error) {
 }
 
 // Run starts the HTTP server and blocks until it stops. An optional address
-// overrides the configured listening address, so both Run() and Run(":8001")
-// are supported.
+// override is claimed atomically with the running state.
 func (server *Server) Run(address ...string) error {
 	if len(address) > 1 {
 		return fmt.Errorf("Run accepts at most one address")
 	}
+	override := ""
 	if len(address) == 1 {
-		if err := server.setAddress(address[0]); err != nil {
-			return err
-		}
+		override = address[0]
 	}
-	return server.runWithSignals(server.tlsEnabled, server.tlsCertFile, server.tlsKeyFile)
+	return server.runWithSignalsAt(override, server.tlsEnabled, server.tlsCertFile, server.tlsKeyFile)
 }
 
 func (server *Server) setAddress(address string) error {
@@ -474,9 +491,17 @@ func (server *Server) Shutdown(ctx context.Context) error {
 	if taskErr := server.lifecycle.Wait(ctx); shutdownErr == nil {
 		shutdownErr = taskErr
 	}
-	_ = server.logger.Sync()
 	if stopErr := server.lifecycle.Stop(ctx); shutdownErr == nil {
 		shutdownErr = stopErr
+	}
+	var loggerErr error
+	if server.loggerOwned {
+		loggerErr = logging.Close(server.logger)
+	} else if !isNilInterface(server.logger) {
+		loggerErr = server.logger.Sync()
+	}
+	if shutdownErr == nil {
+		shutdownErr = loggerErr
 	}
 	if shutdownErr == nil {
 		shutdownErr = lifecycleErr
@@ -516,18 +541,12 @@ func (server *Server) registerDocumentationRoutes() {
 
 // Listen starts the configured HTTP server on address.
 func (server *Server) Listen(address string) error {
-	if err := server.setAddress(address); err != nil {
-		return err
-	}
-	return server.Run()
+	return server.Run(address)
 }
 
 // ListenTLS starts the configured HTTPS server on address.
 func (server *Server) ListenTLS(address, certFile, keyFile string) error {
-	if err := server.setAddress(address); err != nil {
-		return err
-	}
-	return server.RunTLS(certFile, keyFile)
+	return server.runWithSignalsAt(address, true, certFile, keyFile)
 }
 
 func (server *Server) configureStaticFromConfig() {
