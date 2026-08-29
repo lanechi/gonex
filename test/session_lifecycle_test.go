@@ -29,41 +29,41 @@ type sessionOperationController struct{}
 
 func (*sessionOperationController) Execute(ctx context.Context, request *sessionOperationRequest) (*sessionOperationResponse, error) {
 	frameworkContext := ghttp.FromContext(ctx)
-	session, err := frameworkContext.Session()
+	currentSession, err := frameworkContext.Session()
 	if err != nil {
 		return nil, err
 	}
 	switch request.Action {
 	case "set":
-		err = session.Set("value", "stored")
+		err = currentSession.Set("value", "stored")
 	case "delete":
-		err = session.Delete("value")
+		err = currentSession.Delete("value")
 	case "clear":
-		err = session.Clear()
+		err = currentSession.Clear()
 	case "regenerate":
-		err = session.Regenerate()
+		err = currentSession.Regenerate()
 	case "logout":
-		err = session.Logout()
+		err = currentSession.Logout()
 	case "logout-reopen":
-		previous := session
+		previous := currentSession
 		if err = previous.Logout(); err == nil {
-			session, err = frameworkContext.Session()
+			currentSession, err = frameworkContext.Session()
 		}
-		if err == nil && session == previous {
+		if err == nil && currentSession == previous {
 			err = errors.New("request context returned the logged-out session")
 		}
 		if err == nil {
-			err = session.Set("value", "reopened")
+			err = currentSession.Set("value", "reopened")
 		}
 	}
 	if err != nil {
 		return nil, err
 	}
-	value, err := session.Get("value")
+	value, err := currentSession.Get("value")
 	if err != nil {
 		return nil, err
 	}
-	return &sessionOperationResponse{ID: session.ID(), Value: value}, nil
+	return &sessionOperationResponse{ID: currentSession.ID(), Value: value}, nil
 }
 
 func TestSessionLogoutReopensWithinSameRequest(t *testing.T) {
@@ -72,7 +72,7 @@ func TestSessionLogoutReopensWithinSameRequest(t *testing.T) {
 		storage session.Storage
 	}{
 		{name: "memory", storage: session.NewMemoryStorage()},
-		{name: "cookie", storage: session.NewCookieStorage([]byte("logout-reopen-cookie-secret"))},
+		{name: "cookie", storage: mustCookieStorage(t, "logout-reopen-cookie-secret-at-least-32-bytes")},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -138,7 +138,7 @@ func TestMemorySessionRegenerateDeleteClearAndLogout(t *testing.T) {
 }
 
 func TestCookieSessionRegenerateRevokesOldCookie(t *testing.T) {
-	storage := session.NewCookieStorage([]byte("cookie-session-test-secret"))
+	storage := mustCookieStorage(t, "cookie-session-test-secret-at-least-32-bytes")
 	server := ghttp.NewServer(ghttp.WithLogger(&recordingLogger{}), ghttp.WithSessionManager(ghttp.NewSessionManager(storage, "sid", time.Hour)))
 	if err := server.Bind(&sessionOperationController{}); err != nil {
 		t.Fatal(err)
@@ -168,7 +168,7 @@ func TestCookieSessionRegenerateRevokesOldCookie(t *testing.T) {
 }
 
 func TestCookieSessionLogoutRevokesRotatedTokenFamily(t *testing.T) {
-	storage := session.NewCookieStorage([]byte("cookie-session-family-test-secret"))
+	storage := mustCookieStorage(t, "cookie-session-family-test-secret-at-least-32-bytes")
 	server := ghttp.NewServer(ghttp.WithLogger(&recordingLogger{}), ghttp.WithSessionManager(ghttp.NewSessionManager(storage, "sid", time.Hour)))
 	if err := server.Bind(&sessionOperationController{}); err != nil {
 		t.Fatal(err)
@@ -194,7 +194,7 @@ func TestCookieSessionLogoutRevokesRotatedTokenFamily(t *testing.T) {
 }
 
 func TestCookieSessionLogoutCoversInFlightFamilyRotations(t *testing.T) {
-	storage := session.NewCookieStorage([]byte("cookie-session-in-flight-family-secret"))
+	storage := mustCookieStorage(t, "cookie-session-in-flight-family-secret-at-least-32-bytes")
 	tokenA, err := storage.Encode(map[string]any{"value": "first"}, time.Hour)
 	if err != nil {
 		t.Fatal(err)
