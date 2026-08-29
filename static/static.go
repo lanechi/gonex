@@ -31,9 +31,10 @@ var defaultExtensions = map[string]struct{}{
 	".wasm": {}, ".webmanifest": {},
 }
 
-// Mount mounts a local directory below a URL prefix. A persistent os.Root
-// descriptor owns the filesystem boundary so symlink swaps between validation
-// and open cannot redirect requests outside the configured tree.
+// Mount mounts a local directory below a URL prefix. Each request opens a
+// short-lived os.Root and verifies that it still refers to the directory that
+// was mounted. This preserves descriptor-relative path safety without keeping
+// a directory handle open for the lifetime of the router on Windows.
 func Mount(engine *gin.Engine, relative, root string, options Options) error {
 	if engine == nil {
 		return fmt.Errorf("static engine is nil")
@@ -52,10 +53,12 @@ func Mount(engine *gin.Engine, relative, root string, options Options) error {
 	if !rootInfo.IsDir() {
 		return fmt.Errorf("static root %q is not a directory", root)
 	}
-	rootHandle, err := os.OpenRoot(resolvedRoot)
-	if err != nil {
-		return fmt.Errorf("open static root %q: %w", root, err)
+	rootHandle, ok := openVerifiedRoot(resolvedRoot, rootInfo)
+	if !ok {
+		return fmt.Errorf("open static root %q", root)
 	}
+	_ = rootHandle.Close()
+
 	prefix := strings.TrimRight(relative, "/")
 	if prefix == "" {
 		prefix = "/"
@@ -79,6 +82,12 @@ func Mount(engine *gin.Engine, relative, root string, options Options) error {
 			context.Status(http.StatusNotFound)
 			return
 		}
+		rootHandle, ok := openVerifiedRoot(resolvedRoot, rootInfo)
+		if !ok {
+			context.Status(http.StatusNotFound)
+			return
+		}
+		defer rootHandle.Close()
 		if rootPathHasSymlink(rootHandle, requestedPath) {
 			context.Status(http.StatusNotFound)
 			return
@@ -97,16 +106,12 @@ func Mount(engine *gin.Engine, relative, root string, options Options) error {
 		engine.NoRoute(handler)
 		return nil
 	}
-	if err := registerHandlers(engine, wildcardPattern(prefix), handler); err != nil {
-		_ = rootHandle.Close()
-		return err
-	}
-	return nil
+	return registerHandlers(engine, wildcardPattern(prefix), handler)
 }
 
-// MountFile mounts one file below a URL path. The file's parent directory is
-// held through os.Root so replacing path components after registration cannot
-// redirect the route to a different directory tree.
+// MountFile mounts one file below a URL path. The resolved parent directory is
+// verified for each request before the file is opened descriptor-relatively, so
+// replacing a parent path cannot redirect the route outside the mounted tree.
 func MountFile(engine *gin.Engine, relative, filePath string, options Options) error {
 	if engine == nil {
 		return fmt.Errorf("static engine is nil")
@@ -128,10 +133,17 @@ func MountFile(engine *gin.Engine, relative, filePath string, options Options) e
 	if err != nil {
 		return fmt.Errorf("resolve static file %q: %w", filePath, err)
 	}
-	rootHandle, err := os.OpenRoot(filepath.Dir(resolvedPath))
+	rootPath := filepath.Dir(resolvedPath)
+	rootInfo, err := os.Stat(rootPath)
 	if err != nil {
 		return fmt.Errorf("open static file root %q: %w", filePath, err)
 	}
+	rootHandle, ok := openVerifiedRoot(rootPath, rootInfo)
+	if !ok {
+		return fmt.Errorf("open static file root %q", filePath)
+	}
+	_ = rootHandle.Close()
+
 	fileName := filepath.Base(resolvedPath)
 	allowed := extensionAllowlist(options)
 	handler := func(context *gin.Context) {
@@ -139,6 +151,12 @@ func MountFile(engine *gin.Engine, relative, filePath string, options Options) e
 			context.Status(http.StatusNotFound)
 			return
 		}
+		rootHandle, ok := openVerifiedRoot(rootPath, rootInfo)
+		if !ok {
+			context.Status(http.StatusNotFound)
+			return
+		}
+		defer rootHandle.Close()
 		linkInfo, err := rootHandle.Lstat(fileName)
 		if err != nil || linkInfo.Mode()&os.ModeSymlink != 0 || linkInfo.IsDir() {
 			context.Status(http.StatusNotFound)
@@ -157,11 +175,7 @@ func MountFile(engine *gin.Engine, relative, filePath string, options Options) e
 		}
 		serveLocalFile(context, file, info, fileName, options.CacheControl)
 	}
-	if err := registerHandlers(engine, relative, handler); err != nil {
-		_ = rootHandle.Close()
-		return err
-	}
-	return nil
+	return registerHandlers(engine, relative, handler)
 }
 
 // MountFS mounts an io/fs filesystem, including an embed.FS.
@@ -307,6 +321,22 @@ func validMountPath(value string) bool {
 	}
 	decoded, err := unescapePath(value)
 	return err == nil && decoded == value
+}
+
+func openVerifiedRoot(rootPath string, expected fs.FileInfo) (*os.Root, bool) {
+	if expected == nil || !expected.IsDir() {
+		return nil, false
+	}
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		return nil, false
+	}
+	current, err := root.Stat(".")
+	if err != nil || !current.IsDir() || !os.SameFile(expected, current) {
+		_ = root.Close()
+		return nil, false
+	}
+	return root, true
 }
 
 func localFile(root *os.Root, requestedPath, index string) (*os.File, string, fs.FileInfo, bool) {
