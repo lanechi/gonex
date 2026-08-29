@@ -130,7 +130,7 @@ func TestLifecycleHooksAndTrackedTasks(t *testing.T) {
 
 func mustCookieStorage(t *testing.T, secret string) *session.CookieStorage {
 	t.Helper()
-	storage, err := session.NewCookieStorage([]byte(secret))
+	storage, err := session.NewCookieStorage([]byte(secret), session.NewMemoryCookieRevocationStore())
 	if err != nil {
 		t.Fatal(err)
 	}
