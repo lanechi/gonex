@@ -6,10 +6,17 @@ type overlapGate struct {
 	mu            sync.Mutex
 	policy        OverlapPolicy
 	active        int
+	activeToken   any
+	queued        bool
+	queuedToken   any
 	queuedHandler func()
 }
 
 func (gate *overlapGate) run(handler func()) (executed, queued bool) {
+	return gate.runWithToken(gate, handler)
+}
+
+func (gate *overlapGate) runWithToken(token any, handler func()) (executed, queued bool) {
 	gate.mu.Lock()
 	if gate.policy == AllowOverlap {
 		gate.active++
@@ -19,8 +26,12 @@ func (gate *overlapGate) run(handler func()) (executed, queued bool) {
 		return true, false
 	}
 	if gate.active > 0 {
-		if gate.policy == QueueOne && gate.queuedHandler == nil {
-			gate.queuedHandler = handler
+		if gate.policy == QueueOne && !gate.queued {
+			gate.queued = true
+			gate.queuedToken = token
+			if token != gate.activeToken {
+				gate.queuedHandler = handler
+			}
 			gate.mu.Unlock()
 			return false, true
 		}
@@ -28,18 +39,25 @@ func (gate *overlapGate) run(handler func()) (executed, queued bool) {
 		return false, false
 	}
 	gate.active = 1
+	gate.activeToken = token
 	current := handler
 	gate.mu.Unlock()
 	for {
 		current()
 		gate.mu.Lock()
-		if gate.policy == QueueOne && gate.queuedHandler != nil {
-			current = gate.queuedHandler
+		if gate.policy == QueueOne && gate.queued {
+			if gate.queuedHandler != nil {
+				current = gate.queuedHandler
+			}
+			gate.activeToken = gate.queuedToken
+			gate.queued = false
+			gate.queuedToken = nil
 			gate.queuedHandler = nil
 			gate.mu.Unlock()
 			continue
 		}
 		gate.active = 0
+		gate.activeToken = nil
 		gate.mu.Unlock()
 		return true, false
 	}
@@ -61,6 +79,8 @@ func (gate *overlapGate) setPolicy(policy OverlapPolicy) {
 	gate.mu.Lock()
 	gate.policy = policy
 	if policy != QueueOne {
+		gate.queued = false
+		gate.queuedToken = nil
 		gate.queuedHandler = nil
 	}
 	gate.mu.Unlock()
