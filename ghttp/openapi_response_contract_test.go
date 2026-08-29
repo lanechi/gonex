@@ -13,6 +13,8 @@ func (customEnvelopeEncoder) Encode(ctx *Context, data any) error {
 	return nil
 }
 
+func noopErrorHandler(*Context, error) {}
+
 func TestCustomResponseEncoderDisablesBuiltInOpenAPIByDefault(t *testing.T) {
 	server := NewServer(WithResponseEncoder(customEnvelopeEncoder{}))
 	response := httptest.NewRecorder()
@@ -31,5 +33,26 @@ func TestCustomResponseEncoderCanExplicitlyReenableOpenAPI(t *testing.T) {
 	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
 	if response.Code != http.StatusOK {
 		t.Fatalf("explicit OpenAPI enable did not override response-encoder default: status=%d", response.Code)
+	}
+}
+
+func TestCustomErrorHandlerDisablesBuiltInOpenAPIByDefault(t *testing.T) {
+	server := NewServer(WithErrorHandler(noopErrorHandler))
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("custom error handler left default OpenAPI enabled: status=%d", response.Code)
+	}
+}
+
+func TestCustomErrorHandlerCanExplicitlyReenableOpenAPI(t *testing.T) {
+	server := NewServer(
+		WithErrorHandler(noopErrorHandler),
+		WithOpenAPI(OpenAPIOptions{Enabled: true}),
+	)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("explicit OpenAPI enable did not override error-handler default: status=%d", response.Code)
 	}
 }
