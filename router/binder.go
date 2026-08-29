@@ -18,6 +18,7 @@ func NewBinder(requestType reflect.Type) (*Binder, error) {
 	if err := collectFieldBindings(requestType.Elem(), nil, &binder.fields); err != nil {
 		return nil, err
 	}
+	binder.Fields = cloneFieldBindings(binder.fields)
 	for _, field := range binder.fields {
 		if field.Query != "" {
 			binder.hasQuery = true
