@@ -165,12 +165,19 @@ func (manager *serverRestartManager) restart(ctx context.Context) error {
 	// listener and is responsible for continuing service. Parent cleanup may
 	// still report errors, but killing the ready child at that point can leave
 	// both generations unable to accept connections because Shutdown may have
-	// already closed the parent's listener.
-	shutdownContext, cancel := context.WithTimeout(ctx, manager.server.shutdownTimeout)
+	// already closed the parent's listener. The caller context no longer owns
+	// this irreversible handoff either: cancellation after ready must not leave
+	// both parent and child serving indefinitely, so cleanup switches to its own
+	// bounded background context.
+	shutdownContext, cancel := restartHandoffCleanupContext(manager.server.shutdownTimeout)
 	defer cancel()
 	shutdownErr := manager.server.Shutdown(shutdownContext)
 	go func() { _, _ = process.Wait() }()
 	return shutdownErr
+}
+
+func restartHandoffCleanupContext(timeout time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), timeout)
 }
 
 func restartEnvironment() []string {
