@@ -49,7 +49,7 @@ type Binder struct {
 | `logging/` | Logger 抽象与默认实现 |
 | `middleware/` | 独立 HTTP Middleware 能力 |
 | `openapi/` | OpenAPI/Schema/Swagger |
-| `session/` | Storage、MemoryStorage、CookieStorage |
+| `session/` | Storage、MemoryStorage、CookieStorage、CookieRevocationStore contract |
 | `template/` | 模板解析、缓存、watcher |
 | `static/` | 安全静态资源挂载 |
 | `lifecycle/` | Hook、后台任务、阶段同步 |
@@ -74,7 +74,7 @@ type Binder struct {
 4. `gx` 若生成受影响 API/目录，已同步；
 5. `examples/demo` 与其它受影响 example 已同步；
 6. README/架构/skills 中受影响事实已同步；
-7. 根 module、gx module、contrib modules 和其它独立 modules 完成 `go mod tidy -diff`、test/vet；并发敏感的 root/gx 还必须通过 `-race`；
+7. 根 module、gx module、contrib modules 和其它独立 modules 完成 `go mod tidy -diff`、`go test ./...`、`go test -race ./...`、`go vet ./...`；
 8. `git diff --check` 通过；
 9. 最后再做一次源码审查，检查竞态、ownership、rollback、错误路径和资源释放。
 
@@ -183,6 +183,9 @@ Scan Controller
 - CORS slice 必须脱离调用方所有权后才能进入请求热路径；
 - OpenAPI cache 使用独立锁，路由变更时显式 invalidate；
 - 写出 HTTP response 后不能再追加第二个 error envelope；
+- Cookie/Session token 写入在 response headers 已提交后必须失败，禁止撤销旧 token 后再尝试写一个客户端收不到的新 Cookie；
+- `OnStarted` 只有在 listener bind 且 `http.Server.Serve` 已真正进入 `Accept` 后才能执行；
+- graceful restart 的 child 发出 ready 后即视为完成服务 ownership handoff；父进程后续 cleanup 失败不得再 kill 已接管流量的 child；
 - `Server.Err()` 的初始化错误必须可观察，不静默降级。
 
 `SetTemplateRoot`/Template Manager 可以运行期使用，因为 template package 自身锁住 root/cache/watcher；不要在 ghttp 外层再建立重复锁模型。
@@ -226,7 +229,7 @@ struct、typed slice/map 等可以作为输入，但存储后不承诺保持原 
 
 func、chan、循环引用、NaN/Inf 等返回错误。
 
-### 10.3 存储与生命周期
+### 10.3 Storage 与 Cookie revocation
 
 `session.Storage` 保持 context-first：
 
@@ -240,28 +243,54 @@ type Storage interface {
 
 Redis 等外部 client 由业务持有，core 不提供 Redis Session client/driver。
 
-Logout 必须：
+`CookieStorage` 不得在内部偷偷维护 process-local blacklist。构造时必须显式传入：
 
-- 删除/撤销持久状态；
-- 删除 Cookie；
-- 清空旧 handle；
-- 标记 loggedOut；
-- 驱逐同请求 Session cache。
+```go
+type CookieRevocationStore interface {
+    IsRevoked(ctx context.Context, tokenDigest, familyDigest string, now int64) (bool, error)
+    RegisterFamilyToken(ctx context.Context, familyDigest string, expiresAt, now int64) error
+    RevokeToken(ctx context.Context, tokenDigest string, expiresAt int64) error
+    RevokeFamily(ctx context.Context, familyDigest string, expiresAt, now int64) error
+}
+```
+
+约束：
+
+- store 只接收 SHA-256 digest，不需要原始 Cookie/token；
+- `RegisterFamilyToken` 必须原子完成“检查 family revoke + 更新该 family 最新 expiry”；
+- `RevokeFamily` 必须至少覆盖当前 family 已知的最大 token expiry；
+- `MemoryCookieRevocationStore` 只用于测试/明确单进程场景；
+- 多实例/重启需要共享 revocation 时由业务提供 Redis/DB adapter；
+- 配置文件启用 CookieStorage 时，必须显式 `session.storage.revocation=memory`；否则初始化失败，不静默选择本地状态。
+
+Session mutation 顺序：
+
+```text
+build replacement
+→ validate outbound Cookie
+→ authoritative revoke/delete old token or ID
+→ publish new Cookie
+→ commit managed handle
+```
+
+authoritative delete/revoke 失败时不得把 handle 标记为已退出或已轮换。`Logout` 必须在撤销成功后才清空旧 handle、标记 loggedOut、驱逐同请求 Session cache。
 
 ## 11. Lifecycle
 
-`lifecycle.Lifecycle` 的目标是阶段幂等、并发调用共享结果、后台任务可取消。
+`lifecycle.Lifecycle` 的目标是阶段幂等、避免 phase 自等待、后台任务可取消。
 
-- Start / Started / Shutdown / Stop 使用 phase attempt；
-- 同阶段并发调用等待同一个 `done`；
+- Start / Started / Shutdown / Stop 使用明确 phase state；
+- active phase 的同步并发/重入调用返回 `ErrPhaseInProgress`，不得等待 active attempt；
+- startup 期间收到 shutdown 要记录 shutdown intent、取消 task context，并返回 `ErrStartupInProgress`，由 Server 在 startup unwind 后重试 cleanup；
 - 后台任务使用 `taskCount + taskDone channel`；
 - 不重新使用 `sync.WaitGroup` 构造 Add/Wait 时序限制；
 - `Wait` 不为每次等待创建辅助 goroutine；
 - `BeginShutdown` 一次性取消 task context；
 - Stop 在 Shutdown 后执行；
-- Hook 不得长期阻塞且必须尊重 Context。
+- Hook 不得长期阻塞且必须尊重 Context；
+- Hook 内调用 Start/Shutdown/Stop 不能形成同步自等待。
 
-如修改阶段状态机，必须添加高并发回归测试并用 `go test -race` 验证。
+如修改阶段状态机，必须添加高并发和 hook reentry 回归测试并用 `go test -race` 验证。
 
 ## 12. Scheduler
 
@@ -277,7 +306,9 @@ Overlap：
 
 - `SkipIfRunning` 默认；
 - `AllowOverlap`；
-- `QueueOne` 最多保留一个待运行触发。
+- `QueueOne` 最多保留一个待运行触发；
+- 已被 `QueueOne` 接受的 trigger 是 committed work，后续 policy 切换不得静默丢弃；
+- `AllowOverlap -> QueueOne` 必须在最后一个 active execution 结束后接管 queued work，不能卡住 queue caller。
 
 ### 12.2 MutableScheduler
 
@@ -297,7 +328,10 @@ type MutableScheduler interface {
 
 - 失败时保留旧任务；
 - 跨版本复用同一个 overlap gate；
-- 新 engine job 安装并确认旧 job 移除后再切换 overlap policy；
+- replacement engine record 在 manager commit 前保持 unpublished；即使 `RunImmediately` 触发，也不能执行未提交 generation；
+- old record 的 cleanup orphan 先移除，正式 old handle 最后移除；cleanup 失败时不能先把当前有效 job 删掉；
+- 新 generation commit 后才切换 overlap policy 并允许 execution；
+- replacement 失败必须 abort unpublished generation；
 - 不产生 `SkipIfRunning` 跨版本失效窗口。
 
 `Jobs()` 必须在 manager lock 内复制所有 mutable record 字段，再到锁外查询 engine handle；禁止复制 `*jobRecord` 后锁外读取其可变字段。
@@ -383,6 +417,7 @@ runtime Set > process env > .env > config file > default
 - CORS 必须显式来源；
 - credentials + wildcard origin 禁止；
 - SameSite=None 必须 Secure；
+- Cookie 写入必须发生在 response headers commit 前；
 - Body/multipart/Header 有上限；
 - release/test 不泄漏内部错误；
 - static 同时校验 URL/path、root boundary、symlink 和扩展名。
@@ -412,6 +447,7 @@ DirectoryTransaction：
 - stage 必须是 project root 内的 absolute、existing、non-symlink directory，并转换成同一 `os.Root` 下的 relative path；
 - Target 必须 project-relative；
 - 多 Target 不能相同或父子嵌套；
+- 在任何 backup/install mutation 前完成全量 preflight，拒绝 stage↔stage、stage↔target 的 equality/ancestor/descendant overlap；
 - install 失败恢复旧目录；
 - `gx dao` 的 generated directory 不允许手写业务代码。
 
@@ -476,7 +512,7 @@ go vet ./...
 
 ```bash
 for module in contrib/gormlog contrib/redislog examples/basic examples/demo examples/quick-demo benchmarks/gx; do
-  (cd "$module" && go mod tidy -diff && go test ./... && go vet ./...)
+  (cd "$module" && go mod tidy -diff && go test ./... && go test -race ./... && go vet ./...)
 done
 ```
 
@@ -494,8 +530,13 @@ done
 - 是否在持锁期间调用不可控用户代码？
 - shutdown/rollback 是否会因外部 adapter 永久阻塞？
 - 失败后是否留下半注册、半替换或 orphan runtime state？
-- Scheduler Replace 是否跨版本保留 overlap 语义？
+- Lifecycle hook 是否可能同步等待自己正在执行的 phase？
+- graceful restart child ready 后，父进程错误路径是否仍可能错误 kill child？
+- Scheduler Replace 是否阻止 unpublished generation 执行，并跨版本保留 overlap/queued work 语义？
 - Session Get/Set 是否保持 detached snapshot？
+- CookieStorage 是否显式持有 revocation store，且多实例语义没有退化成隐式 process-local blacklist？
+- session rotate/logout 是否在 authoritative revoke/delete 成功前避免发布不可回滚的新状态？
+- gx DirectorySwap 是否在 mutation 前拒绝 stage/target 交叉 overlap？
 - gx publication 是否始终绑定 retained `os.Root`，且每个 transaction 都在所有路径关闭？
 - root/gx/modules 的 tidy、test、race、vet 与 macOS/Windows portability 是否全部通过？
 - README、AGENTS、examples、skills 是否仍描述当前代码？
