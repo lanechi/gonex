@@ -2,6 +2,7 @@ package ghttp
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 
 	"github.com/lanechi/gonex/logging"
@@ -11,11 +12,13 @@ import (
 type blockingShutdownScheduler struct {
 	waitEntered chan struct{}
 	releaseWait chan struct{}
+	waitCalls   atomic.Int32
 }
 
-func (*blockingShutdownScheduler) Start(context.Context) error       { return nil }
-func (*blockingShutdownScheduler) Stop()                             {}
+func (*blockingShutdownScheduler) Start(context.Context) error { return nil }
+func (*blockingShutdownScheduler) Stop()                       {}
 func (s *blockingShutdownScheduler) Wait(context.Context) error {
+	s.waitCalls.Add(1)
 	select {
 	case <-s.waitEntered:
 	default:
@@ -51,5 +54,8 @@ func TestConcurrentShutdownsShareResourceCleanupAttempt(t *testing.T) {
 	}
 	if err := <-second; err != nil {
 		t.Fatalf("second shutdown returned %v", err)
+	}
+	if calls := manager.waitCalls.Load(); calls != 1 {
+		t.Fatalf("scheduler cleanup ran %d times, want 1", calls)
 	}
 }
