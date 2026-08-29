@@ -45,8 +45,6 @@ func (server *Server) registerRouteDefinitions(routes []router.Definition, middl
 	installGinLogging(server.logger)
 	for _, route := range routes {
 		metadata := route.Metadata
-		runtime := route.Runtime
-		runtime.Binder.MaxMultipartMemory = server.maxMultipartMemory
 		routeMiddleware := server.middlewareForRoute(metadata.Method, metadata.Path)
 		handlers := make([]gin.HandlerFunc, 0, len(routeMiddleware)+len(middleware)+1)
 		handlers = append(handlers, ginMiddlewareHandlers(middleware)...)
