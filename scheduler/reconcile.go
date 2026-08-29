@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 )
@@ -15,14 +14,8 @@ type preparedDefinition struct {
 	job        Job
 }
 
-type schedulerReplacer interface {
-	replace(Job) error
-}
-
-type schedulerValidator interface {
-	validate(Job) error
-}
-
+type schedulerReplacer interface{ replace(Job) error }
+type schedulerValidator interface{ validate(Job) error }
 type undoOperation func() error
 
 // Sync validates the complete desired state before mutating the runtime
@@ -56,8 +49,6 @@ func (loader *Loader) Sync(ctx context.Context) error {
 		return errors.Join(append([]error{cause}, rollbackErrors...)...)
 	}
 
-	// Same-ID/same-name changes can use the built-in scheduler's private replace
-	// capability, which preserves the overlap gate for already-running jobs.
 	for id, old := range previous {
 		current, exists := prepared[id]
 		if !exists || old.Name != current.definition.Name || old.Version == current.definition.Version {
@@ -74,8 +65,6 @@ func (loader *Loader) Sync(ctx context.Context) error {
 		undos = append(undos, undo)
 	}
 
-	// Remove disabled, deleted, and renamed old records before additions so a new
-	// ID may intentionally reuse a released runtime job name.
 	for id, old := range previous {
 		current, exists := prepared[id]
 		if exists && old.Name == current.definition.Name {
@@ -91,8 +80,6 @@ func (loader *Loader) Sync(ctx context.Context) error {
 		undos = append(undos, func() error { return loader.scheduler.Add(oldJob) })
 	}
 
-	// Add new and renamed enabled records after all conflicting old names have
-	// been released.
 	for id, current := range prepared {
 		old, exists := previous[id]
 		if exists && old.Name == current.definition.Name {
@@ -116,6 +103,7 @@ func (loader *Loader) Sync(ctx context.Context) error {
 
 func (loader *Loader) prepareDefinitions(definitions []JobDefinition) (map[string]preparedDefinition, error) {
 	prepared := make(map[string]preparedDefinition, len(definitions))
+	ids := make(map[string]struct{}, len(definitions))
 	names := make(map[string]string, len(definitions))
 	for _, raw := range definitions {
 		definition := cloneJobDefinition(raw)
@@ -125,9 +113,10 @@ func (loader *Loader) prepareDefinitions(definitions []JobDefinition) (map[strin
 		if definition.ID == "" || definition.Name == "" {
 			return nil, fmt.Errorf("persistent job ID and name are required")
 		}
-		if _, exists := prepared[definition.ID]; exists {
+		if _, exists := ids[definition.ID]; exists {
 			return nil, fmt.Errorf("duplicate persistent job ID %q", definition.ID)
 		}
+		ids[definition.ID] = struct{}{}
 		if priorID, exists := names[definition.Name]; exists {
 			return nil, fmt.Errorf("duplicate persistent job name %q for IDs %q and %q", definition.Name, priorID, definition.ID)
 		}
@@ -163,15 +152,9 @@ func (loader *Loader) prepareDefinitions(definitions []JobDefinition) (map[strin
 
 func (loader *Loader) jobFor(definition JobDefinition, handler PersistentHandler) Job {
 	definition = cloneJobDefinition(definition)
-	return Job{
-		Name:          definition.Name,
-		Schedule:      definition.Schedule,
-		Timeout:       definition.Timeout,
-		OverlapPolicy: definition.OverlapPolicy,
-		Handler: func(jobContext context.Context) error {
-			return loader.execute(jobContext, handler, definition)
-		},
-	}
+	return Job{Name: definition.Name, Schedule: definition.Schedule, Timeout: definition.Timeout, OverlapPolicy: definition.OverlapPolicy, Handler: func(jobContext context.Context) error {
+		return loader.execute(jobContext, handler, definition)
+	}}
 }
 
 func (loader *Loader) runtimeJob(definition JobDefinition) (Job, error) {
@@ -193,13 +176,10 @@ func replaceRuntimeJob(runtime Scheduler, oldJob, newJob Job) (undoOperation, er
 		return nil, err
 	}
 	if err := runtime.Add(newJob); err != nil {
-		restoreErr := runtime.Add(oldJob)
-		return nil, errors.Join(err, restoreErr)
+		return nil, errors.Join(err, runtime.Add(oldJob))
 	}
 	return func() error {
-		removeErr := removePersistentJob(runtime, newJob.Name)
-		addErr := runtime.Add(oldJob)
-		return errors.Join(removeErr, addErr)
+		return errors.Join(removePersistentJob(runtime, newJob.Name), runtime.Add(oldJob))
 	}, nil
 }
 
@@ -217,14 +197,4 @@ func cloneLoadedJobs(source map[string]loadedJob) map[string]loadedJob {
 		clone[id] = job
 	}
 	return clone
-}
-
-// sortedLoadedIDs is kept private for deterministic diagnostics and tests.
-func sortedLoadedIDs(values map[string]loadedJob) []string {
-	ids := make([]string, 0, len(values))
-	for id := range values {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	return ids
 }
