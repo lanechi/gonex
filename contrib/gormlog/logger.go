@@ -105,7 +105,10 @@ func (adapter *Logger) Trace(ctx context.Context, begin time.Time, fc func() (sq
 		return
 	}
 	if adapter.level == gormlogger.Info {
-		adapter.logger.Debug(ctx, "query", baseFields()...)
+		// GORM Info means ordinary SQL should be visible at the configured
+		// informational level. Mapping this to Debug silently hid SQL whenever
+		// the gonex logger itself was configured at its normal Info level.
+		adapter.logger.Info(ctx, "query", baseFields()...)
 	}
 }
 

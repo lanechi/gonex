@@ -93,6 +93,30 @@ func BeginDirectoryTransaction(root string, swaps ...DirectorySwap) (*DirectoryT
 		})
 	}
 
+	// Validate the complete publication graph before the first rename. A stage
+	// inside any target can be moved away when that target is backed up; nested
+	// stages can similarly disappear when an earlier stage is installed. These
+	// relationships are therefore invalid even when the target paths themselves
+	// do not overlap.
+	for left := range preparedTargets {
+		for right := range preparedTargets {
+			if pathOverlaps(preparedTargets[left].stageRelative, preparedTargets[right].relative) {
+				return nil, fmt.Errorf(
+					"directory stage %q overlaps target %q",
+					preparedTargets[left].DirectorySwap.Stage,
+					preparedTargets[right].DirectorySwap.Target,
+				)
+			}
+			if left < right && pathOverlaps(preparedTargets[left].stageRelative, preparedTargets[right].stageRelative) {
+				return nil, fmt.Errorf(
+					"directory stage %q overlaps stage %q",
+					preparedTargets[left].DirectorySwap.Stage,
+					preparedTargets[right].DirectorySwap.Stage,
+				)
+			}
+		}
+	}
+
 	backupRoot, err := createRootTempDir(rootHandle, ".gx-directory-backup-")
 	if err != nil {
 		return nil, fmt.Errorf("create directory backup: %w", err)
