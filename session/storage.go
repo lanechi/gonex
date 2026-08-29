@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"time"
 
@@ -72,8 +73,6 @@ func (storage *MemoryStorage) Get(_ context.Context, id string) (map[string]any,
 		return nil, ErrNotFound
 	}
 
-	// Re-check under the write lock before deleting. A concurrent Set may have
-	// replaced the expired entry after the optimistic read above.
 	storage.mu.Lock()
 	entry, ok = storage.entries[id]
 	if !ok {
@@ -116,32 +115,146 @@ func (storage *MemoryStorage) Delete(_ context.Context, id string) error {
 	return nil
 }
 
-// CookieStorage stores signed, JSON-encoded session values in the cookie.
-// Revoked tokens are retained until expiry so Regenerate and Logout cannot
-// replay an older cookie within the current process.
+// CookieRevocationStore is the persistence boundary for signed-cookie
+// revocation. CookieStorage passes only SHA-256 hex digests, never raw tokens or
+// family identifiers. Implementations intended for multiple processes must use
+// shared durable storage.
+//
+// RegisterFamilyToken must atomically reject a currently revoked family with
+// ErrNotFound and update that family's latest token expiry. RevokeFamily must
+// revoke through the greater of expiresAt and every expiry previously observed
+// for the family, so Logout also covers tokens issued by requests already in
+// flight.
+type CookieRevocationStore interface {
+	IsRevoked(ctx context.Context, tokenDigest, familyDigest string, now int64) (bool, error)
+	RegisterFamilyToken(ctx context.Context, familyDigest string, expiresAt, now int64) error
+	RevokeToken(ctx context.Context, tokenDigest string, expiresAt int64) error
+	RevokeFamily(ctx context.Context, familyDigest string, expiresAt, now int64) error
+}
+
+// MemoryCookieRevocationStore is an explicit process-local implementation for
+// tests and single-process applications. Its state is intentionally lost on
+// process restart; authentication deployments that require logout/revocation
+// across restart or multiple instances should provide a durable shared store.
+type MemoryCookieRevocationStore struct {
+	mu             sync.Mutex
+	tokens         map[string]int64
+	families       map[string]int64
+	familyExpiries map[string]int64
+}
+
+func NewMemoryCookieRevocationStore() *MemoryCookieRevocationStore {
+	return &MemoryCookieRevocationStore{
+		tokens:         make(map[string]int64),
+		families:       make(map[string]int64),
+		familyExpiries: make(map[string]int64),
+	}
+}
+
+func (store *MemoryCookieRevocationStore) IsRevoked(_ context.Context, tokenDigest, familyDigest string, now int64) (bool, error) {
+	if store == nil {
+		return false, errors.New("cookie revocation store is nil")
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	store.cleanupLocked(now)
+	return store.tokens[tokenDigest] > now || familyDigest != "" && store.families[familyDigest] > now, nil
+}
+
+func (store *MemoryCookieRevocationStore) RegisterFamilyToken(_ context.Context, familyDigest string, expiresAt, now int64) error {
+	if store == nil {
+		return errors.New("cookie revocation store is nil")
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	store.cleanupLocked(now)
+	if store.families[familyDigest] > now {
+		return ErrNotFound
+	}
+	if expiresAt > store.familyExpiries[familyDigest] {
+		store.familyExpiries[familyDigest] = expiresAt
+	}
+	return nil
+}
+
+func (store *MemoryCookieRevocationStore) RevokeToken(_ context.Context, tokenDigest string, expiresAt int64) error {
+	if store == nil {
+		return errors.New("cookie revocation store is nil")
+	}
+	store.mu.Lock()
+	if expiresAt > store.tokens[tokenDigest] {
+		store.tokens[tokenDigest] = expiresAt
+	}
+	store.mu.Unlock()
+	return nil
+}
+
+func (store *MemoryCookieRevocationStore) RevokeFamily(_ context.Context, familyDigest string, expiresAt, now int64) error {
+	if store == nil {
+		return errors.New("cookie revocation store is nil")
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	store.cleanupLocked(now)
+	if familyExpiry := store.familyExpiries[familyDigest]; familyExpiry > expiresAt {
+		expiresAt = familyExpiry
+	}
+	if expiresAt > store.families[familyDigest] {
+		store.families[familyDigest] = expiresAt
+	}
+	return nil
+}
+
+func (store *MemoryCookieRevocationStore) cleanupLocked(now int64) {
+	for key, expiry := range store.tokens {
+		if expiry <= now {
+			delete(store.tokens, key)
+		}
+	}
+	for key, expiry := range store.families {
+		if expiry <= now {
+			delete(store.families, key)
+		}
+	}
+	for key, expiry := range store.familyExpiries {
+		if expiry <= now {
+			delete(store.familyExpiries, key)
+		}
+	}
+}
+
+// CookieStorage stores signed, JSON-encoded session values in the cookie. It
+// deliberately does not own revocation persistence; the application chooses a
+// process-local or durable shared CookieRevocationStore explicitly.
 type CookieStorage struct {
-	secret   []byte
-	mu       sync.RWMutex
-	revoked  map[[sha256.Size]byte]int64
-	families map[[sha256.Size]byte]int64
-	// familyExpiries tracks the latest token issued for each family so Logout
-	// also covers tokens produced by requests that were already in flight.
-	familyExpiries map[[sha256.Size]byte]int64
+	secret      []byte
+	revocations CookieRevocationStore
 }
 
 // NewCookieStorage creates signed-cookie session storage. The HMAC key must be
-// at least 32 bytes of application-supplied secret material; hashing or padding
-// a weak password does not increase its entropy and is intentionally rejected.
-func NewCookieStorage(secret []byte) (*CookieStorage, error) {
+// at least 32 bytes of application-supplied secret material and a revocation
+// store is mandatory so process-local revocation is never selected implicitly.
+func NewCookieStorage(secret []byte, revocations CookieRevocationStore) (*CookieStorage, error) {
 	if len(secret) < minimumCookieSecretBytes {
 		return nil, fmt.Errorf("cookie session secret must be at least %d bytes", minimumCookieSecretBytes)
 	}
-	return &CookieStorage{
-		secret:         append([]byte(nil), secret...),
-		revoked:        make(map[[sha256.Size]byte]int64),
-		families:       make(map[[sha256.Size]byte]int64),
-		familyExpiries: make(map[[sha256.Size]byte]int64),
-	}, nil
+	if isNilCookieRevocationStore(revocations) {
+		return nil, errors.New("cookie session revocation store is required")
+	}
+	return &CookieStorage{secret: append([]byte(nil), secret...), revocations: revocations}, nil
+}
+
+func isNilCookieRevocationStore(store CookieRevocationStore) bool {
+	if store == nil {
+		return true
+	}
+	value := reflect.ValueOf(store)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
 }
 
 type cookiePayload struct {
@@ -151,12 +264,16 @@ type cookiePayload struct {
 	Values    map[string]any `json:"values"`
 }
 
-func (storage *CookieStorage) Get(_ context.Context, id string) (map[string]any, error) {
+func (storage *CookieStorage) Get(ctx context.Context, id string) (map[string]any, error) {
 	payload, err := storage.decode(id)
 	if err != nil {
 		return nil, ErrNotFound
 	}
-	if storage.isRevoked(id) || storage.isFamilyRevoked(payload.Family) {
+	revoked, err := storage.revocations.IsRevoked(ctx, cookieDigest(id), cookieDigest(payload.Family), time.Now().Unix())
+	if err != nil {
+		return nil, fmt.Errorf("check cookie session revocation: %w", err)
+	}
+	if revoked {
 		return nil, ErrNotFound
 	}
 	return sessionvalue.CloneMap(payload.Values), nil
@@ -187,113 +304,39 @@ func (storage *CookieStorage) decode(id string) (cookiePayload, error) {
 func (storage *CookieStorage) Set(context.Context, string, map[string]any, time.Duration) error {
 	return errors.New("cookie session storage must be persisted through Session")
 }
-func (storage *CookieStorage) Delete(_ context.Context, id string) error {
+
+func (storage *CookieStorage) Delete(ctx context.Context, id string) error {
 	payload, err := storage.decode(id)
 	if err != nil {
 		return nil
 	}
 	expiresAt := cookieExpiry(payload)
-	now := time.Now().Unix()
-	key := sha256.Sum256([]byte(id))
-	storage.mu.Lock()
-	storage.cleanupLocked(now)
-	storage.revoked[key] = expiresAt
-	if payload.Family != "" {
-		familyKey := sha256.Sum256([]byte(payload.Family))
-		if familyExpiry := storage.familyExpiries[familyKey]; familyExpiry > expiresAt {
-			expiresAt = familyExpiry
-		}
-		storage.families[familyKey] = expiresAt
+	if payload.Family == "" {
+		return storage.revocations.RevokeToken(ctx, cookieDigest(id), expiresAt)
 	}
-	storage.mu.Unlock()
-	return nil
+	return storage.revocations.RevokeFamily(ctx, cookieDigest(payload.Family), expiresAt, time.Now().Unix())
 }
 
 // RevokeToken invalidates one signed cookie while leaving newer tokens in its
 // session family usable. It is used during token rotation.
-func (storage *CookieStorage) RevokeToken(id string) error {
+func (storage *CookieStorage) RevokeToken(ctx context.Context, id string) error {
 	payload, err := storage.decode(id)
 	if err != nil {
 		return nil
 	}
-	expiresAt := cookieExpiry(payload)
-	now := time.Now().Unix()
-	storage.mu.Lock()
-	storage.cleanupLocked(now)
-	storage.revoked[sha256.Sum256([]byte(id))] = expiresAt
-	storage.mu.Unlock()
-	return nil
-}
-
-func (storage *CookieStorage) isRevoked(id string) bool {
-	key := sha256.Sum256([]byte(id))
-	storage.mu.RLock()
-	expiresAt, revoked := storage.revoked[key]
-	storage.mu.RUnlock()
-	if !revoked {
-		return false
-	}
-	if expiresAt > time.Now().Unix() {
-		return true
-	}
-	storage.mu.Lock()
-	if current, ok := storage.revoked[key]; ok && current <= time.Now().Unix() {
-		delete(storage.revoked, key)
-	}
-	storage.mu.Unlock()
-	return false
-}
-
-func (storage *CookieStorage) isFamilyRevoked(family string) bool {
-	if family == "" {
-		return false
-	}
-	key := sha256.Sum256([]byte(family))
-	storage.mu.RLock()
-	expiresAt, revoked := storage.families[key]
-	storage.mu.RUnlock()
-	if !revoked {
-		return false
-	}
-	if expiresAt > time.Now().Unix() {
-		return true
-	}
-	storage.mu.Lock()
-	if current, ok := storage.families[key]; ok && current <= time.Now().Unix() {
-		delete(storage.families, key)
-	}
-	storage.mu.Unlock()
-	return false
-}
-
-func (storage *CookieStorage) cleanupLocked(now int64) {
-	for key, expiry := range storage.revoked {
-		if expiry <= now {
-			delete(storage.revoked, key)
-		}
-	}
-	for key, expiry := range storage.families {
-		if expiry <= now {
-			delete(storage.families, key)
-		}
-	}
-	for key, expiry := range storage.familyExpiries {
-		if expiry <= now {
-			delete(storage.familyExpiries, key)
-		}
-	}
+	return storage.revocations.RevokeToken(ctx, cookieDigest(id), cookieExpiry(payload))
 }
 
 // Encode creates a signed cookie value for SessionManager.
-func (storage *CookieStorage) Encode(values map[string]any, ttl time.Duration) (string, error) {
-	return storage.EncodeWithFamily(values, ttl, "")
+func (storage *CookieStorage) Encode(ctx context.Context, values map[string]any, ttl time.Duration) (string, error) {
+	return storage.EncodeWithFamily(ctx, values, ttl, "")
 }
 
 // EncodeWithFamily creates a signed cookie value in family. An empty family
 // starts a new independent session family.
-func (storage *CookieStorage) EncodeWithFamily(values map[string]any, ttl time.Duration, family string) (string, error) {
-	if storage == nil || len(storage.secret) == 0 {
-		return "", errors.New("cookie session secret is required")
+func (storage *CookieStorage) EncodeWithFamily(ctx context.Context, values map[string]any, ttl time.Duration, family string) (string, error) {
+	if storage == nil || len(storage.secret) == 0 || isNilCookieRevocationStore(storage.revocations) {
+		return "", errors.New("cookie session storage is not configured")
 	}
 	normalized, err := sessionvalue.NormalizeMap(values)
 	if err != nil {
@@ -318,18 +361,14 @@ func (storage *CookieStorage) EncodeWithFamily(values map[string]any, ttl time.D
 		return "", err
 	}
 	body = append(body, storage.sign(body)...)
-	familyKey := sha256.Sum256([]byte(family))
-	now := time.Now().Unix()
-	storage.mu.Lock()
-	storage.cleanupLocked(now)
-	if revokedUntil := storage.families[familyKey]; revokedUntil > now {
-		storage.mu.Unlock()
-		return "", ErrNotFound
+	if err := storage.revocations.RegisterFamilyToken(
+		ctx,
+		cookieDigest(family),
+		cookieExpiry(payload),
+		time.Now().Unix(),
+	); err != nil {
+		return "", fmt.Errorf("register cookie session family: %w", err)
 	}
-	if expiresAt := cookieExpiry(payload); expiresAt > storage.familyExpiries[familyKey] {
-		storage.familyExpiries[familyKey] = expiresAt
-	}
-	storage.mu.Unlock()
 	return base64.RawURLEncoding.EncodeToString(body), nil
 }
 
@@ -338,6 +377,11 @@ func cookieExpiry(payload cookiePayload) int64 {
 		return payload.ExpiresAt
 	}
 	return int64(^uint64(0) >> 1)
+}
+
+func cookieDigest(value string) string {
+	digest := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(digest[:])
 }
 
 // Family returns the signed cookie's session family, or an empty string when

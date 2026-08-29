@@ -163,7 +163,16 @@ func (server *Server) applyConfig() {
 				if secretValue == "" || secretValue == "<nil>" {
 					secretValue = configString(get("session.secret"))
 				}
-				cookieStorage, err := session.NewCookieStorage([]byte(secretValue))
+				revocationType := strings.ToLower(strings.TrimSpace(configString(get("session.storage.revocation"))))
+				if revocationType != "memory" {
+					if revocationType == "" || revocationType == "<nil>" {
+						server.addInitializationError(fmt.Errorf("configure cookie session storage: session.storage.revocation must be explicitly set to memory, or provide a shared CookieRevocationStore through WithSessionManager"))
+					} else {
+						server.addInitializationError(fmt.Errorf("unsupported session.storage.revocation %q", revocationType))
+					}
+					break
+				}
+				cookieStorage, err := session.NewCookieStorage([]byte(secretValue), session.NewMemoryCookieRevocationStore())
 				if err != nil {
 					server.addInitializationError(fmt.Errorf("configure cookie session storage: %w", err))
 				} else {

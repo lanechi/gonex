@@ -95,7 +95,7 @@ func (manager *SessionManager) Open(ctx *Context) (session.Session, error) {
 	}
 	if newID {
 		if cookieStorage, ok := manager.storage.(*session.CookieStorage); ok {
-			id, err = cookieStorage.Encode(values, manager.ttl)
+			id, err = cookieStorage.Encode(manager.requestContext(ctx), values, manager.ttl)
 			if err != nil {
 				return nil, err
 			}
@@ -129,16 +129,26 @@ func (manager *SessionManager) Open(ctx *Context) (session.Session, error) {
 func (manager *SessionManager) persist(current *managedSession) error {
 	if cookieStorage, ok := manager.storage.(*session.CookieStorage); ok {
 		oldID := current.id
-		id, err := cookieStorage.EncodeWithFamily(current.values, manager.ttl, current.family)
+		requestContext := manager.requestContext(current.context)
+		id, err := cookieStorage.EncodeWithFamily(requestContext, current.values, manager.ttl, current.family)
 		if err != nil {
 			return err
 		}
-		if err := current.context.Cookie().Set(manager.cookieName, id, manager.CookieOptions()); err != nil {
+		cookieManager := current.context.Cookie()
+		prepared, err := cookieManager.prepare(manager.cookieName, id, manager.CookieOptions())
+		if err != nil {
 			return err
 		}
+		// Revocation is the only fallible operation after the replacement token
+		// has been created. The response cookie is published only after it
+		// succeeds, so a failed rotation leaves the caller on the old token.
+		if err := cookieStorage.RevokeToken(requestContext, oldID); err != nil {
+			return err
+		}
+		cookieManager.writePrepared(prepared)
 		current.id = id
 		current.family = cookieStorage.Family(id)
-		return cookieStorage.RevokeToken(oldID)
+		return nil
 	}
 	return manager.set(current.context, current.id, current.values)
 }
@@ -146,34 +156,43 @@ func (manager *SessionManager) persist(current *managedSession) error {
 func (manager *SessionManager) regenerate(current *managedSession) error {
 	if cookieStorage, ok := manager.storage.(*session.CookieStorage); ok {
 		oldID := current.id
-		id, err := cookieStorage.EncodeWithFamily(current.values, manager.ttl, current.family)
+		requestContext := manager.requestContext(current.context)
+		id, err := cookieStorage.EncodeWithFamily(requestContext, current.values, manager.ttl, current.family)
 		if err != nil {
 			return err
 		}
-		if err := current.context.Cookie().Set(manager.cookieName, id, manager.CookieOptions()); err != nil {
+		cookieManager := current.context.Cookie()
+		prepared, err := cookieManager.prepare(manager.cookieName, id, manager.CookieOptions())
+		if err != nil {
 			return err
 		}
+		if err := cookieStorage.RevokeToken(requestContext, oldID); err != nil {
+			return err
+		}
+		cookieManager.writePrepared(prepared)
 		current.id = id
 		current.family = cookieStorage.Family(id)
-		return cookieStorage.RevokeToken(oldID)
+		return nil
 	}
+
 	oldID := current.id
 	newID, err := session.NewID()
+	if err != nil {
+		return err
+	}
+	cookieManager := current.context.Cookie()
+	prepared, err := cookieManager.prepare(manager.cookieName, newID, manager.CookieOptions())
 	if err != nil {
 		return err
 	}
 	if err := manager.set(current.context, newID, current.values); err != nil {
 		return err
 	}
-	if err := current.context.Cookie().Set(manager.cookieName, newID, manager.CookieOptions()); err != nil {
-		_ = manager.delete(current.context, newID)
-		return err
-	}
 	if err := manager.delete(current.context, oldID); err != nil {
 		cleanupErr := manager.delete(current.context, newID)
-		restoreErr := current.context.Cookie().Set(manager.cookieName, oldID, manager.CookieOptions())
-		return errors.Join(err, cleanupErr, restoreErr)
+		return errors.Join(err, cleanupErr)
 	}
+	cookieManager.writePrepared(prepared)
 	current.id = newID
 	return nil
 }
@@ -296,12 +315,17 @@ func (current *managedSession) Logout() error {
 	if current.loggedOut {
 		return nil
 	}
-	storageErr := current.manager.delete(current.context, current.id)
+	// Do not publish a local logout if the authoritative storage/revocation
+	// operation failed. Keeping the current state and cookie lets the caller
+	// retry instead of reporting logout while a replayable token still exists.
+	if err := current.manager.delete(current.context, current.id); err != nil {
+		return err
+	}
 	cookieErr := current.context.Cookie().Delete(current.manager.cookieName, current.manager.CookieOptions())
 	current.values = make(map[string]any)
 	current.id = ""
 	current.family = ""
 	current.loggedOut = true
 	current.context.evictSession(current)
-	return errors.Join(storageErr, cookieErr)
+	return cookieErr
 }

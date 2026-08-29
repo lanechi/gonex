@@ -37,9 +37,9 @@ func (manager *CookieManager) Get(name string) (string, error) {
 	return cookie.Value, nil
 }
 
-func (manager *CookieManager) Set(name, value string, options CookieOptions) error {
+func (manager *CookieManager) prepare(name, value string, options CookieOptions) (*http.Cookie, error) {
 	if manager == nil || manager.context == nil || manager.context.gin == nil {
-		return http.ErrNotSupported
+		return nil, http.ErrNotSupported
 	}
 	responseCookie := &http.Cookie{
 		Name:     name,
@@ -53,15 +53,30 @@ func (manager *CookieManager) Set(name, value string, options CookieOptions) err
 		SameSite: options.SameSite,
 	}
 	if responseCookie.SameSite == http.SameSiteNoneMode && !responseCookie.Secure {
-		return fmt.Errorf("SameSite=None cookie %q must be Secure", name)
+		return nil, fmt.Errorf("SameSite=None cookie %q must be Secure", name)
 	}
 	if err := responseCookie.Valid(); err != nil {
-		return err
+		return nil, err
 	}
 	if serialized := responseCookie.String(); len(serialized) > 4096 {
-		return fmt.Errorf("cookie %q exceeds 4096 bytes", name)
+		return nil, fmt.Errorf("cookie %q exceeds 4096 bytes", name)
 	}
-	http.SetCookie(manager.context.gin.Writer, responseCookie)
+	return responseCookie, nil
+}
+
+func (manager *CookieManager) writePrepared(cookie *http.Cookie) {
+	if manager == nil || manager.context == nil || manager.context.gin == nil || cookie == nil {
+		return
+	}
+	http.SetCookie(manager.context.gin.Writer, cookie)
+}
+
+func (manager *CookieManager) Set(name, value string, options CookieOptions) error {
+	responseCookie, err := manager.prepare(name, value, options)
+	if err != nil {
+		return err
+	}
+	manager.writePrepared(responseCookie)
 	return nil
 }
 
