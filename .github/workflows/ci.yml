@@ -24,7 +24,7 @@ jobs:
       - name: Run staticcheck
         run: |
           go install honnef.co/go/tools/cmd/staticcheck@latest
-          staticcheck ./...
+          staticcheck -checks=all,-U1000 ./...
       - name: Run govulncheck
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
