@@ -48,7 +48,7 @@ func TestBinderBindsPathQueryHeaderCookieAndFileIndependently(t *testing.T) {
 		t.Fatalf("NewBinder() error = %v", err)
 	}
 	var target independentSourceRequest
-	if err := binder.Bind(context, &target); err != nil {
+	if err := binder.Bind(context, &target, 32<<20); err != nil {
 		t.Fatalf("Bind() error = %v", err)
 	}
 	if target.Path != "path" {
