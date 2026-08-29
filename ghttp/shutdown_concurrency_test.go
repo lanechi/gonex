@@ -2,7 +2,6 @@ package ghttp
 
 import (
 	"context"
-	"sync/atomic"
 	"testing"
 
 	"github.com/lanechi/gonex/logging"
@@ -12,13 +11,11 @@ import (
 type blockingShutdownScheduler struct {
 	waitEntered chan struct{}
 	releaseWait chan struct{}
-	waitCalls   atomic.Int32
 }
 
 func (*blockingShutdownScheduler) Start(context.Context) error { return nil }
 func (*blockingShutdownScheduler) Stop()                       {}
 func (s *blockingShutdownScheduler) Wait(context.Context) error {
-	s.waitCalls.Add(1)
 	select {
 	case <-s.waitEntered:
 	default:
@@ -32,7 +29,7 @@ func (*blockingShutdownScheduler) Remove(string) error               { return ni
 func (*blockingShutdownScheduler) Jobs() []scheduler.JobInfo         { return nil }
 func (*blockingShutdownScheduler) Use(...scheduler.Middleware) error { return nil }
 
-func TestConcurrentShutdownsShareResourceCleanupAttempt(t *testing.T) {
+func TestConcurrentShutdownsCompleteSuccessfully(t *testing.T) {
 	manager := &blockingShutdownScheduler{
 		waitEntered: make(chan struct{}),
 		releaseWait: make(chan struct{}),
@@ -44,9 +41,14 @@ func TestConcurrentShutdownsShareResourceCleanupAttempt(t *testing.T) {
 
 	first := make(chan error, 1)
 	second := make(chan error, 1)
+	secondStarted := make(chan struct{})
 	go func() { first <- server.Shutdown(context.Background()) }()
 	<-manager.waitEntered
-	go func() { second <- server.Shutdown(context.Background()) }()
+	go func() {
+		close(secondStarted)
+		second <- server.Shutdown(context.Background())
+	}()
+	<-secondStarted
 	close(manager.releaseWait)
 
 	if err := <-first; err != nil {
@@ -55,7 +57,36 @@ func TestConcurrentShutdownsShareResourceCleanupAttempt(t *testing.T) {
 	if err := <-second; err != nil {
 		t.Fatalf("second shutdown returned %v", err)
 	}
-	if calls := manager.waitCalls.Load(); calls != 1 {
-		t.Fatalf("scheduler cleanup ran %d times, want 1", calls)
+}
+
+func TestShutdownCleanupAttemptsCoalesceOnlyWhileActive(t *testing.T) {
+	server := NewServer(WithLogger(logging.NewNopLogger()))
+
+	first, leader := server.beginShutdownCleanupAttempt()
+	if !leader {
+		t.Fatal("first cleanup attempt was not elected leader")
 	}
+	follower, leader := server.beginShutdownCleanupAttempt()
+	if leader {
+		t.Fatal("concurrent cleanup attempt unexpectedly became leader")
+	}
+	if follower != first {
+		t.Fatal("concurrent cleanup attempt did not join active attempt")
+	}
+
+	server.finishShutdownCleanupAttempt(first, nil)
+	select {
+	case <-first.done:
+	default:
+		t.Fatal("completed cleanup attempt did not publish completion")
+	}
+
+	retry, leader := server.beginShutdownCleanupAttempt()
+	if !leader {
+		t.Fatal("sequential cleanup retry did not become leader")
+	}
+	if retry == first {
+		t.Fatal("sequential cleanup retry reused completed attempt")
+	}
+	server.finishShutdownCleanupAttempt(retry, nil)
 }
