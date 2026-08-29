@@ -1,215 +1,498 @@
 # gonex 开发与协作规则
 
-本文件合并了原工作区级协作规则与 gonex 项目规则，适用于整个 gonex 仓库。它定义代码边界、完成标准和验证要求；用户文档见
-`README.md`，架构设计见 `docs/architecture.md`，面向 AI 的应用开发规则见
-`examples/demo/.agents/skills/`。
+本文件适用于整个 `lanechi/gonex` 仓库，面向人和代码 Agent。用户文档见 `README.md`，架构说明见 `docs/architecture.md`，应用项目 skills 见 `examples/demo/.agents/skills/`。
 
-## 仓库边界
+## 1. 项目定位
 
-- 当前工作区只承载 `gonex/` 项目；本文件位于项目根目录。
-- Git 仓库与核心 Go module 为当前目录，module 为 `github.com/lanechi/gonex`。
-- `gx/` 是独立 Go module，提供 `gx` 代码生成 CLI。
-- `examples/*/` 和 `benchmarks/gx/` 均为独立 Go module。
-- 仓库没有根级 `go.work`；命令必须在目标 module 内执行。
+gonex 是基于 Gin 的轻量 Go Web 框架，只负责 Web Server 相关能力：HTTP、声明式路由、Controller、Binder、Middleware、配置、日志、安全、Session、模板、静态资源、OpenAPI、生命周期和 Scheduler。
 
-## Agent 分工
+数据库、缓存、消息队列属于业务基础设施，不进入 core。可选集成放 `contrib/`；`gx/` 是独立代码生成 module。
 
-项目级 `.codex/config.toml` 使用参考项目的调度模型和 3 个 agent 文件：
+## 2. v1 前的 API 原则：不做兼容层
 
-- `planner-sol`：只读高级规划，负责架构、公共契约、跨 module、并发、安全和复杂根因。
-- `planner-terra`：只读常规规划，负责普通功能、多文件开发、一般重构和常规 Bug。
-- `executor-terra`：按已接受计划执行边界明确的实现、测试、生成器和文档变更。
+当前项目处于 v1 之前，**正确性优先于兼容性**。
 
-根会话和规划/执行代理必须遵守本文件；子代理不得递归派生任务。
+发现公共 API 设计错误、重复、泄漏内部状态或阻碍安全并发时：
 
-## 项目定位
+- 直接删除或重设计；
+- 不创建旧名称 alias；
+- 不创建只负责转发的 wrapper/function；
+- 不保留 compatibility field/snapshot；
+- 不为了旧调用维护双路径；
+- 不维护全量 public API golden 来阻止有意的 breaking cleanup。
 
-gonex 是基于 Gin 的轻量 Go Web 框架。核心关注 HTTP Server、声明式路由、Controller、请求绑定、
-统一响应、Middleware、配置、日志、安全、Session、模板、静态资源、OpenAPI 和生命周期。
+禁止示例：
 
-数据库不是 HTTP 运行时的必选能力。仓库通过 `contrib/gormlog` 提供 GORM 日志适配，
-通过独立 module `gx/` 提供数据库模型及工程代码生成；业务项目自行决定数据库、缓存和
-消息系统的生命周期。
+```go
+// 禁止：为了旧 API 继续存在而转发。
+func OldBind(...) error { return NewBind(...) }
 
-## Module 与目录边界
+// 禁止：为了兼容暴露内部运行态副本。
+type Binder struct {
+    Fields []FieldBinding
+    fields []FieldBinding
+}
+```
+
+可以保留针对**已明确删除的坏 API**的回归测试，防止 Agent 以后重新引入兼容垫片。
+
+每个 breaking change 必须同步：调用点、测试、examples、生成器（若受影响）和文档。
+
+## 3. Module 与目录边界
 
 | 路径 | 职责 |
 | --- | --- |
-| `g/` | 便捷入口、`g.Meta`、命名 Server 与默认配置访问 |
-| `ghttp/` | HTTP 编排层：Server、路由注册、请求处理、响应和生命周期 |
-| `router/` | Controller 扫描、元数据解析、绑定契约和框架路由注册表 |
-| `config/` | 配置文件、`.env`、环境变量和运行时覆盖 |
-| `logging/` | 与实现解耦的结构化 Logger；Zap 是内置实现 |
-| `middleware/` | Request ID、请求体限制、Host、CORS、CSRF 等底层 Middleware |
-| `openapi/` | OpenAPI 文档模型、Schema 生成和 Swagger HTML |
-| `session/`、`cookie/` | context-first Session 契约与内存、签名 Cookie；Redis client 由业务持有，`contrib/redislog` 只适配 Redis 诊断日志 |
-| `template/`、`static/` | 模板管理和安全的静态资源挂载 |
-| `lifecycle/` | 启停 Hook、后台任务跟踪与优雅退出 |
-| `scheduler/` | 独立的本地定时任务契约；ghttp 托管 Start/Stop/Wait，不泄漏调度引擎类型 |
-| `contrib/` | 可选集成适配器，不得反向污染核心抽象 |
-| `test/` | 面向外部使用方式的框架集成、隔离、安全和回归测试 |
-| `gx/` | 独立 module；`gx` CLI 和生成器实现 |
-| `examples/demo/` | `gx init` 下载的规范项目模板；只集成 PostgreSQL，并携带项目 agents/skills |
-| `examples/` | 独立 module；规范模板与框架契约的可运行证明 |
-| `benchmarks/gx/` | 独立 benchmark module；不属于运行时依赖 |
+| `g/` | `g.Meta`、命名 Server、默认配置便捷入口 |
+| `ghttp/` | Server、路由编排、请求处理、响应、安全、Session HTTP 集成、生命周期托管 |
+| `router/` | Controller 扫描、RouteMetadata、Binder 编译、Registry |
+| `config/` | 配置文件、`.env`、环境变量、运行时覆盖 |
+| `logging/` | Logger 抽象与默认实现 |
+| `middleware/` | 独立 HTTP Middleware 能力 |
+| `openapi/` | OpenAPI/Schema/Swagger |
+| `session/` | Storage、MemoryStorage、CookieStorage |
+| `template/` | 模板解析、缓存、watcher |
+| `static/` | 安全静态资源挂载 |
+| `lifecycle/` | Hook、后台任务、阶段同步 |
+| `scheduler/` | 本地 Scheduler、持久任务 Loader、Locker、Recorder |
+| `internal/` | core 内部共享实现，不形成公共 API |
+| `contrib/` | 可选第三方适配，不反向污染 core |
+| `test/` | 外部契约、架构、安全、集成回归 |
+| `gx/` | 独立 module 的 CLI/生成器 |
+| `examples/demo/` | `gx init` 的规范项目模板 |
+| `examples/*` | 独立 module 的可运行证明 |
+| `benchmarks/gx/` | 独立 benchmark module |
 
-仓库没有 `go.work`。核心、`gx`、每个 example 和 benchmark 必须在各自 module 中验证。
+仓库没有根级 `go.work`。不同 module 必须分别验证。
 
-## 每次修改的完成定义
+## 4. 完成定义
 
-任何项目更新都必须把文档、生成器和示例视为同一功能的一部分。
+一次修改只有满足以下条件才算完成：
 
-### 强制检查顺序
+1. 生产代码已完成；
+2. 最低层单元测试或集成测试覆盖新契约；
+3. 并发敏感路径有 race 测试或可被现有 `-race` 测试实际触达；
+4. `gx` 若生成受影响 API/目录，已同步；
+5. `examples/demo` 与其它受影响 example 已同步；
+6. README/架构/skills 中受影响事实已同步；
+7. 根 module、gx module 和独立 modules 完成验证；
+8. `git diff --check` 通过；
+9. 最后再做一次源码审查，检查竞态、ownership、rollback、错误路径和资源释放。
 
-1. 修改核心实现并补充最低层单元测试或 `test/` 集成测试。
-2. 检查 `gx` 是否生成或复制了受影响的 API、配置、目录或样板；受影响时同步修改生成器、
-   `examples/demo/` 和生成器测试。`gx init` 的项目骨架只能来自 `examples/demo/`，不得维护第二套字符串模板。
-3. 更新或新增能运行该行为的 example。生成器输出约定变化时，同步 `examples/demo/`，并检查
-   `examples/quick-demo` 是否仍能证明现有项目的持续生成能力。
-4. 更新受影响的全部 README。架构边界、请求链路、状态归属或扩展点变化时，同时更新
-   `docs/architecture.md`。
-5. 检查 `examples/demo/.agents/skills/` 中的 API、Controller、Logic/Service、`gx` 和审查规则是否仍
-   准确；受影响时同步对应 skill 和 reference。
-6. 只有协作规范本身变化时才修改本文件；不通过无意义改字制造“已同步”的假象。
+不要把“CI 绿”当作源码审查的替代品。
 
-即使某一层无需内容变化，也必须完成检查，并在提交说明或交付结果中记录：
-`core`、`gx`、`examples/demo`、其它 `examples`、`docs`、`examples/demo/.agents/skills` 各自的修改或“不受影响”原因。
+## 5. Go 基础规则
 
-### 变更同步矩阵
+- 使用 Go `1.26.0`；
+- 所有 Go 文件必须 `gofmt`；
+- 导出 API 必须有准确 GoDoc；
+- 错误用 `%w` / `errors.Join` 保留链；
+- 仅 `Must*` 或应用启动不可恢复失败使用 panic；
+- `context.Context` 沿请求/I/O/任务传递，不长期保存请求 Context；
+- core 公共 API 不泄漏 Zap、Viper、GORM、gocron 等实现类型；
+- 新能力优先小接口和独立 package，不继续膨胀 `ghttp.Server`；
+- 不使用 `unsafe` 绕过第三方并发或缓存规则。
 
-| 变更 | 必须同步 |
-| --- | --- |
-| 路由、绑定、校验、响应或 Middleware | `test/`、根 README、`gx` Controller/API 模板、`basic` 或 `quick-demo`、相关 skill |
-| 配置、日志、安全、Session、模板、静态资源、生命周期 | 对应集成测试、根 README、架构文档、相关 example、`gx init` 模板 |
-| 公共类型、方法、默认值或错误语义 | API 注释、回归测试、README 示例、生成代码编译测试 |
-| `gx` 命令、生成目录或所有权 | `gx` 测试、`gx/README.md`、`examples/quick-demo` 生成结果与说明、相关 skill |
-| `gx init` 项目结构或默认依赖 | `examples/demo/`、下载/解包测试、`gx/README.md`、根 README、相关 skill |
-| example 行为或命令 | example 自身测试、该目录 README、`examples/README.md` |
-| 架构或模块边界 | 本文件、`docs/architecture.md`、根 README、`gx`、examples 与 skills 的边界说明 |
+## 6. Ownership 与并发总原则
 
-## Go 代码规则
+所有共享可变状态必须能回答两个问题：
 
-### 公共 API
+1. 谁拥有它？
+2. 谁用什么同步方式修改它？
 
-- 使用 Go `1.26.0` 语法和标准库习惯；所有 Go 文件提交前运行 `gofmt`。
-- 导出标识符必须有准确的 GoDoc；注释解释契约、所有权和限制，不复述名称。
-- 公共 API 不能暴露 Zap、Viper 或 GORM 等实现类型，除非该包本身就是明确的适配器。
-- 新 API 优先通过小接口、Option 或独立组件扩展，避免持续扩大 `Server` 的职责。
-- 普通错误返回 `error` 并使用 `%w` 保留错误链；仅 `Must*` 或应用启动失败允许 panic。
-- `context.Context` 必须沿请求、日志、生命周期和 I/O 调用传递，不保存到长期对象中。
+默认规则：
 
-### 路由与请求链路
+- 框架接收自己声明的 slice/map 配置时，在跨 ownership 边界复制；
+- 请求热路径只读 immutable snapshot，或通过明确的 `RWMutex`；
+- 不在锁外继续读取会被其它 goroutine 修改的 struct pointer 字段；
+- 不返回内部 map/slice 让调用方直接修改；
+- 不在持锁状态执行可能长时间阻塞的用户代码或外部 I/O，除非原子语义确实要求且已有边界设计；
+- 多把锁必须保持统一顺序；当前 Server 注册/运行相关路径使用 `registrationMu` → `stateMu`；
+- 关闭路径必须有有界 Context，不能永久卡在外部 recorder/locker/storage；
+- 新增 goroutine 必须有明确退出路径，不允许“fire-and-forget”资源泄漏。
 
-- 框架自己的 `router.Registry` 是路由事实来源；Gin 路由树只是执行后端。
-- 一批 Controller 路由必须先完整扫描和校验，再写入 Gin 和 Registry；失败不能留下部分注册。
-- Controller 契约保持 `func(context.Context, *Req) (*Res, error)`，请求必须是结构体指针。
-- `g.Meta` 负责路由/OpenAPI 元数据。`path`、`query`、`header`、`cookie`、`form`、`file`
-  进入 `FieldBinding`；JSON 由请求结构体的 `json` 标签和 Content-Type 驱动。
-- 自定义 `binding` 与 `validate` Validator 必须是构造完成后只读的独立实例；请求热路径不得切换
-  tag name、清理 Validator 缓存或通过 `unsafe` 修改第三方私有状态。
-- 反射和标签解析应在注册阶段完成并缓存；请求热路径不得重复扫描类型。
-- Middleware 顺序保持“系统级 → 应用级 → 分组/Bind → 路由级 → Controller”；所有层级的
-  `nil` Middleware 必须在注册阶段拒绝。
-- 已经写出响应后不得追加第二个错误包络。
+### 外部注入对象
 
-### 状态、并发与生命周期
+以下属于依赖注入或 escape hatch：
 
-- 每个 `Server` 独立拥有路由、OpenAPI 缓存、Logger、Session、模板、配置和生命周期状态。
-- 新增共享可变状态前必须证明进程级语义不可避免，并提供并发保护和跨 Server 隔离测试。
-- 修改运行时设置时使用现有锁和快照模式；不要把内部 slice、map 或指针直接暴露给调用方。
-- Server 启动后禁止会改变路由拓扑或执行顺序的配置。
-- 同一请求的 Session 必须复用；Logout 后必须驱逐请求缓存并禁止旧 handle 再次持久化；可取消的
-  存储 I/O 必须透传请求 `context.Context`。
-- 启动 Hook 只有整组成功后才能提交阶段状态；`lifecycle.Lifecycle` 的同阶段并发调用等待同一
-  结果且失败轮次可重试。`Server.Run*` 禁止并发运行，启动失败会完成关闭清理且该实例不再复用。
-- 后台任务通过 `Server.Go` 跟踪，并响应取消；资源释放使用生命周期 Hook，确保失败启动和
-  正常关闭都可回收。
+- `WithLogger`
+- `WithValidator` / `WithBindingValidator`
+- `WithConfig`
+- `WithScheduler`
+- `WithEngine`
+- `Server.Engine()`
+- `Server.HTTPServer()`
 
-### 配置、安全与日志
+框架不反射深拷贝任意第三方对象。调用方在注入后不得与框架并发修改它们，除非该对象自身保证线程安全。
 
-- 配置优先级保持：运行时 `Set` > 系统环境变量 > `.env` > 配置文件 > 默认值。
-- 配置错误必须通过 `Server.Err()` 或返回值可观察，不能静默降级到不安全值。
-- 默认不信任代理；CORS 开启时必须显式给出允许来源；Cookie/CSRF 的
-  `SameSite=None` 必须同时启用 `Secure`。
-- 静态资源必须同时通过路径边界和扩展名白名单；默认仅开放 Web 页面、脚本、样式、常见图片、
-  字体、Wasm 和 Web App Manifest。扩展白名单为 nil 时使用安全默认值，显式空列表拒绝全部文件。
-- 错误详情只在 debug 模式响应，release/test 模式不得泄漏内部错误和堆栈。
-- 所有框架日志通过 `logging.Logger`，请求日志从 Context 获取带 Request ID 的 Logger。
+`Engine()` 不得用于绕过 gonex 注册体系直接添加业务路由；否则 Registry、OpenAPI 和原子注册不再一致。
 
-### 生成代码
+## 7. Router / Controller / Binder
 
-- 带 `Code generated ... DO NOT EDIT.` 的文件只能由 `gx` 或其底层生成器更新。
-- Controller 契约文件可重生成；API 定义和 Controller 业务实现首次创建后由开发者维护，不能带
-  `DO NOT EDIT` 标记。
-- Service 接口由 Logic 方法签名生成；Logic 实现首次创建后由开发者维护，不能被后续生成覆盖。
-- `gx dao` 管理 `internal/dao` 与 `internal/model/entity` 的生成内容。它必须先在 module 内 staging
-  生成、合法化并校验，再成对替换两个目录；任一步失败都要回滚目录及 module 文件。成功执行仍会
-  完整替换旧生成内容，因此禁止在其中放业务手写代码并必须先确认数据库目标。
-- 生成的 Go struct tag 必须通过 `reflect.StructTag`/`go vet`；数据库注释中的引号不能破坏 tag。
-- 生成器必须支持 `--dry-run` 的命令不得在 dry-run 中写文件；重复运行应保持幂等。
-- `gx init` 从 GitHub 对应版本的 `examples/demo/` 下载模板；开发构建使用 `main`。下载、解包、标识替换都在
-  staging 中完成，拒绝越界路径、链接和特殊文件，通过清单校验后才提交目标目录。
+### 7.1 Meta
 
-## 文档规则
+`g.Meta` 必须保持：
 
-- README 面向当前目录的使用者，命令必须能从文档声明的目录直接执行。
-- 根 README 只保留入口、关键能力和常用 API；设计取舍统一写入 `docs/architecture.md`。
-- 不复制会快速失真的实现细节；默认值、路径、命令和生成目录必须以代码和测试为准。
-- 新增、移动或删除 README/架构文档时，必须修复所有相对链接。
-- 文档中的示例代码应来自或对应可编译测试/example，避免维护第二套虚构 API。
-- `examples/demo/.agents/skills` 只记录会改变 AI 决策的框架事实。公共契约、`gx` 命令或推荐分层
-  变化时必须同步；每个 skill 的 `SKILL.md` 负责入口和路由，详细规则放在被入口明确引用的
-  `references/`。
-
-## 验证命令
-
-所有 shell 命令必须以 `rtk` 开头。若默认 Go cache 不可写，使用 `rtk proxy env` 指向
-`/private/tmp` 下的任务专用目录。
-
-核心 module（仓库根目录）：
-
-```bash
-rtk proxy env GOCACHE=/private/tmp/gonex-gocache go test ./...
-rtk proxy env GOCACHE=/private/tmp/gonex-gocache go test -race ./...
-rtk proxy env GOCACHE=/private/tmp/gonex-gocache go vet ./...
-rtk git diff --check
+```go
+type Meta = router.Meta
 ```
 
-生成器 module：
+扫描时使用精确类型身份。不要接受“别的 package 里也叫 Meta”的结构体。
+
+### 7.2 RouteMetadata 与 Runtime 分离
+
+`router.Registry` 只保存文档/检查所需的 `RouteMetadata`，不得持有 Controller reflect runtime、Binder 执行状态或 Gin handler。
+
+运行时 reflect method/Binder 属于 `RouteRuntime`，生命周期只到注册后的执行闭包。
+
+### 7.3 Binder
+
+Binder 是注册期编译出的私有执行计划：
+
+- 不恢复 `Binder.Fields` compatibility snapshot；
+- 不在 Binder 上保存 Server 的可变 multipart limit；
+- multipart limit 在请求执行时显式传入；
+- 请求热路径不得重新扫描 struct tag；
+- 外部检查绑定元数据使用 `RouteMetadata.Bindings`。
+
+### 7.4 原子注册
+
+Controller 批次必须先完成全部校验，再修改真实 Gin 路由树：
+
+```text
+Scan Controller
+→ Compile Binder
+→ Validate path bindings
+→ Validate middleware/handler count
+→ Registry.Validate
+→ temporary Gin tree validation
+→ real Gin registration
+→ Registry commit
+```
+
+禁止出现“前几个 route 已写入，后一个失败”的可观察半状态。
+
+`router.Registry` 必须继续独立于 Gin。
+
+## 8. ghttp Server
+
+- 每个 Server 独立拥有 Registry、OpenAPI cache、security settings、SessionManager、templates、lifecycle、scheduler；
+- `Run*` 不允许同一个 Server 并发启动；
+- address、trusted proxies、route topology 等启动相关修改必须和启动序列化；
+- 动态 Host/CORS/CSRF 使用 `settingsMu` + immutable handler/snapshot 切换；
+- CORS slice 必须脱离调用方所有权后才能进入请求热路径；
+- OpenAPI cache 使用独立锁，路由变更时显式 invalidate；
+- 写出 HTTP response 后不能再追加第二个 error envelope；
+- `Server.Err()` 的初始化错误必须可观察，不静默降级。
+
+`SetTemplateRoot`/Template Manager 可以运行期使用，因为 template package 自身锁住 root/cache/watcher；不要在 ghttp 外层再建立重复锁模型。
+
+## 9. Validator
+
+`binding` 与 `validate` 使用独立 Validator 实例。
+
+自定义 Validator：
+
+- 必须在构造 Server 前配置完成；
+- 注入后视为只读；
+- 请求热路径不调用 `SetTagName`、不清缓存、不修改注册规则；
+- `WithBindingValidator` 与 `WithValidator` 不得使用同一个实例。
+
+## 10. Session
+
+Session 值采用 **JSON-safe canonical detached value** 契约。
+
+### 10.1 允许值
+
+必须能由 `encoding/json` 表达。进入 Session 后规范化成：
+
+- `nil`
+- `bool`
+- `string`
+- `json.Number`
+- `[]any`
+- `map[string]any`
+
+struct、typed slice/map 等可以作为输入，但存储后不承诺保持原 Go concrete type。
+
+### 10.2 禁止 alias
+
+- `managedSession.Set` 必须先 normalize，不保留调用方 map/slice；
+- `managedSession.Get` 返回 clone；
+- `MemoryStorage.Set/Get` 必须 detach；
+- `CookieStorage` 解码使用 `UseNumber`；
+- 自定义 Storage 返回值进入 managed session 前必须 normalize；
+- 不恢复旧的 reflect “best-effort clone arbitrary object”实现。
+
+func、chan、循环引用、NaN/Inf 等返回错误。
+
+### 10.3 存储与生命周期
+
+`session.Storage` 保持 context-first：
+
+```go
+type Storage interface {
+    Get(context.Context, string) (map[string]any, error)
+    Set(context.Context, string, map[string]any, time.Duration) error
+    Delete(context.Context, string) error
+}
+```
+
+Redis 等外部 client 由业务持有，core 不提供 Redis Session client/driver。
+
+Logout 必须：
+
+- 删除/撤销持久状态；
+- 删除 Cookie；
+- 清空旧 handle；
+- 标记 loggedOut；
+- 驱逐同请求 Session cache。
+
+## 11. Lifecycle
+
+`lifecycle.Lifecycle` 的目标是阶段幂等、并发调用共享结果、后台任务可取消。
+
+- Start / Started / Shutdown / Stop 使用 phase attempt；
+- 同阶段并发调用等待同一个 `done`；
+- 后台任务使用 `taskCount + taskDone channel`；
+- 不重新使用 `sync.WaitGroup` 构造 Add/Wait 时序限制；
+- `Wait` 不为每次等待创建辅助 goroutine；
+- `BeginShutdown` 一次性取消 task context；
+- Stop 在 Shutdown 后执行；
+- Hook 不得长期阻塞且必须尊重 Context。
+
+如修改阶段状态机，必须添加高并发回归测试并用 `go test -race` 验证。
+
+## 12. Scheduler
+
+### 12.1 基础 Scheduler
+
+公共接口不泄漏 gocron 类型。
+
+支持：Cron / Every / Once、Timeout、RunImmediately、Middleware、OverlapPolicy。
+
+`Once + RunImmediately` 必须拒绝。
+
+Overlap：
+
+- `SkipIfRunning` 默认；
+- `AllowOverlap`；
+- `QueueOne` 最多保留一个待运行触发。
+
+### 12.2 MutableScheduler
+
+持久 reconcile 只能接受：
+
+```go
+type MutableScheduler interface {
+    Scheduler
+    Validate(Job) error
+    Replace(Job) error
+}
+```
+
+不要恢复“检测不到 Replace 就 Remove+Add”的兼容 fallback。
+
+`Replace` 必须：
+
+- 失败时保留旧任务；
+- 跨版本复用同一个 overlap gate；
+- 新 engine job 安装并确认旧 job 移除后再切换 overlap policy；
+- 不产生 `SkipIfRunning` 跨版本失效窗口。
+
+`Jobs()` 必须在 manager lock 内复制所有 mutable record 字段，再到锁外查询 engine handle；禁止复制 `*jobRecord` 后锁外读取其可变字段。
+
+### 12.3 Persistent Loader
+
+Store 保持数据库无关：
+
+```go
+type Store interface {
+    List(context.Context) ([]JobDefinition, error)
+}
+```
+
+不要重新加入未使用的 `Store.Get`。
+
+`Loader.Sync` 必须遵循：
+
+```text
+load desired state
+→ normalize + validate all definitions
+→ lock loader reconcile state
+→ build/apply mutations
+→ rollback all applied operations on failure
+→ commit loaded snapshot only after success
+```
+
+约束：
+
+- duplicate ID/name 拒绝；
+- `Enabled=false` 不进入 runtime；
+- Handler 必须提前注册；
+- invalid ExecutionMode 拒绝；
+- Singleton 没 Locker 拒绝；
+- Same ID + same Name + Version changed 使用 Replace；
+- rename/stale 先 Remove，再 Add，允许新 ID 复用旧 Name；
+- Payload 每次 load/run deep-copy；
+- ctx cancel 在 mutation 阶段也必须检查。
+
+**Version 是 reconcile 版本。** 修改 Handler/Schedule/Payload/Timeout/OverlapPolicy/ExecutionMode 等持久定义时必须递增 Version。不要偷偷做昂贵 deep-equal 来替代版本契约。
+
+### 12.4 Locker
+
+`ExecutionMode == Singleton` 必须使用 Locker。
+
+- lock key 使用稳定 job ID，不用可重命名 Name；
+- acquired=true 但 Lock 为 nil 必须报错；
+- Locker panic 转成错误；
+- Timeout > 0 的 lease 包含 grace；
+- Timeout == 0 表示 adapter 必须保证锁在 Unlock 前持续有效，必要时自行续租；
+- Unlock 使用有界 cleanup Context。
+
+### 12.5 RunRecorder
+
+每次运行有独立 RunID。
+
+状态：
+
+```text
+running
+success
+failed
+skipped
+timeout
+canceled
+```
+
+Recorder 是 observability，不得因为 `Start` 失败而跳过业务 Handler。Recorder/Unlock cleanup 必须有界，并捕获 adapter panic。最终记录必须在 unlock 结果已知后写入，避免先记录 success 再发生 unlock failure。
+
+## 13. 配置、日志和安全
+
+配置优先级固定：
+
+```text
+runtime Set > process env > .env > config file > default
+```
+
+`ViperConfig` 自身的方法通过锁保护，但 `Set(any)` 可接收外部对象：调用方不得在 Set 后并发修改同一个自定义 pointer/map/slice，除非自行同步。不要实现“反射深拷贝任意 Go 对象”制造虚假安全保证。
+
+安全要求：
+
+- 默认不信任代理；
+- CORS 必须显式来源；
+- credentials + wildcard origin 禁止；
+- SameSite=None 必须 Secure；
+- Body/multipart/Header 有上限；
+- release/test 不泄漏内部错误；
+- static 同时校验 URL/path、root boundary、symlink 和扩展名。
+
+所有框架日志走 `logging.Logger`。
+
+## 14. gx 文件系统安全
+
+`gx/internal/gen/fs` 是生成器的安全边界。
+
+普通 Transaction：
+
+- root-relative only；
+- 拒绝绝对路径和 `..`；
+- 对现有路径逐级 `Lstat`；
+- 拒绝 symlink component；
+- Write 拒绝现有 directory；
+- Delete 拒绝 directory；
+- Write/Delete 之间以及同类操作之间拒绝 equality/ancestor/descendant overlap；
+- Commit 前重新 `safeProjectPath` 校验目标，防止 staging 后 parent 被替换成 symlink；
+- 出错 rollback backup。
+
+DirectoryTransaction：
+
+- stage 必须是 absolute、existing、non-symlink directory；
+- Target 必须 project-relative；
+- 多 Target 不能相同或父子嵌套；
+- install 失败恢复旧目录；
+- `gx dao` 的 generated directory 不允许手写业务代码。
+
+不要为了方便削弱这些检查。
+
+## 15. 生成器规则
+
+- `Code generated ... DO NOT EDIT.` 文件只能由 gx 更新；
+- 用户业务实现不能因重新生成被覆盖；
+- `gx init` 唯一项目模板来源是 `examples/demo/`，不维护第二套字符串模板；
+- 下载、解包、module/name 替换必须在 staging 完成；
+- archive 拒绝 traversal、symlink、特殊文件；
+- dry-run 不写文件；
+- 生成命令重复运行应有确定结果；
+- struct tag 必须经 go/parser/reflect/go vet 验证；
+- 涉及数据库生成目录的操作必须事务式替换。
+
+## 16. 文档与 examples
+
+代码事实优先级：
+
+```text
+production code + tests > examples > README/AGENTS/skills
+```
+
+文档不能描述不存在的 API。
+
+公共 API、默认值、目录结构、Scheduler/Session 语义变化时检查：
+
+- 根 README；
+- `docs/architecture.md`；
+- `gx/README.md`；
+- `examples/README.md`；
+- `examples/demo/README.md`；
+- `examples/demo/.agents/skills/`。
+
+只修改真正受影响的文档，不为了“同步”制造无意义 diff。
+
+## 17. 强制验证矩阵
+
+### Core
+
+```bash
+go test ./...
+go test -race ./...
+go vet ./...
+git diff --check
+```
+
+### gx
 
 ```bash
 cd gx
-rtk proxy env GOCACHE=/private/tmp/gonex-gx-gocache go test ./...
-rtk proxy env GOCACHE=/private/tmp/gonex-gx-gocache go vet ./...
+go test ./...
+go test -race ./...
+go vet ./...
 ```
 
-规范 demo module：
+### 独立 modules
 
 ```bash
-cd examples/demo
-rtk proxy env GOCACHE=/private/tmp/gonex-demo-gocache go test ./...
-rtk proxy env GOCACHE=/private/tmp/gonex-demo-gocache go vet ./...
+for module in examples/basic examples/demo examples/quick-demo benchmarks/gx; do
+  (cd "$module" && go test ./... && go vet ./...)
+done
 ```
 
-Examples 必须逐个验证：
+修改并发、Scheduler、Lifecycle、Session、文件事务、安全 Middleware 时，**必须关注 `-race` 结果，不得只跑普通 test**。
 
-```bash
-cd examples/basic
-rtk proxy env GOCACHE=/private/tmp/gonex-basic-gocache go test ./...
+## 18. 最终审查清单
 
-cd ../quick-demo
-rtk proxy env GOCACHE=/private/tmp/gonex-quick-demo-gocache go test ./...
+提交前逐项回答：
 
-cd ../template-demo
-rtk proxy env GOCACHE=/private/tmp/gonex-template-demo-gocache go test ./...
-```
+- 是否新增了不必要的 public API？
+- 是否为了兼容保留 alias/wrapper/forwarder？
+- 是否有调用方 slice/map/pointer 穿透进入框架共享状态？
+- 是否在锁外读取其它 goroutine 会写的字段？
+- 是否存在锁顺序反转？
+- 是否在持锁期间调用不可控用户代码？
+- shutdown/rollback 是否会因外部 adapter 永久阻塞？
+- 失败后是否留下半注册、半替换或 orphan runtime state？
+- Scheduler Replace 是否跨版本保留 overlap 语义？
+- Session Get/Set 是否保持 detached snapshot？
+- gx commit 前是否重新校验真实路径？
+- root/gx/modules 的 test、race、vet 是否全部通过？
+- README、AGENTS、examples、skills 是否仍描述当前代码？
 
-性能相关变更再进入 `benchmarks/gx/` 运行 benchmark。`staticcheck` 可用时，对核心和 `gx`
-分别运行；不得因为某个可选工具未安装而跳过 `go test`、`go vet` 和 `git diff --check`。
-
-## 工作区安全
-
-- 开始编辑前运行 `rtk git status --short` 和相关 `rtk git diff`，保留所有用户改动。
-- 不使用 `git reset --hard`、`git checkout --` 或递归删除来清理工作区。
-- 不手工修改不属于当前任务的生成文件、数据库文件或 benchmark 结果。
-- 修改行为时优先补失败测试，再实现；交付时列出实际执行的验证和未执行原因。
+只要其中一项不能明确回答，就继续修，不把问题留给后续兼容层。
