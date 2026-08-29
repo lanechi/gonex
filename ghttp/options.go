@@ -363,6 +363,7 @@ func WithTemplateRoot(root string) Option {
 			if err := server.templates.SetRoot(root); err != nil {
 				server.addInitializationError(fmt.Errorf("configure template root: %w", err))
 			}
+		}
 	}
 }
 
