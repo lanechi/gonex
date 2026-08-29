@@ -31,7 +31,9 @@ var defaultExtensions = map[string]struct{}{
 	".wasm": {}, ".webmanifest": {},
 }
 
-// Mount mounts a local directory below a URL prefix.
+// Mount mounts a local directory below a URL prefix. A persistent os.Root
+// descriptor owns the filesystem boundary so symlink swaps between validation
+// and open cannot redirect requests outside the configured tree.
 func Mount(engine *gin.Engine, relative, root string, options Options) error {
 	if engine == nil {
 		return fmt.Errorf("static engine is nil")
@@ -49,6 +51,10 @@ func Mount(engine *gin.Engine, relative, root string, options Options) error {
 	}
 	if !rootInfo.IsDir() {
 		return fmt.Errorf("static root %q is not a directory", root)
+	}
+	rootHandle, err := os.OpenRoot(resolvedRoot)
+	if err != nil {
+		return fmt.Errorf("open static root %q: %w", root, err)
 	}
 	prefix := strings.TrimRight(relative, "/")
 	if prefix == "" {
@@ -73,25 +79,30 @@ func Mount(engine *gin.Engine, relative, root string, options Options) error {
 			context.Status(http.StatusNotFound)
 			return
 		}
-		if localPathEscapes(resolvedRoot, requestedPath) {
-			context.Status(http.StatusNotFound)
-			return
-		}
-		candidate, info, ok := localFile(resolvedRoot, requestedPath, index)
+		file, candidate, info, ok := localFile(rootHandle, requestedPath, index)
 		if !ok || !allowedFile(candidate, allowed) {
-			serveFallback(context, resolvedRoot, index, allowed, options.SPAFallback, options.CacheControl)
+			if file != nil {
+				_ = file.Close()
+			}
+			serveFallback(context, rootHandle, index, allowed, options.SPAFallback, options.CacheControl)
 			return
 		}
-		serveLocalFile(context, candidate, info, options.CacheControl)
+		serveLocalFile(context, file, info, candidate, options.CacheControl)
 	}
 	if prefix == "/" {
 		engine.NoRoute(handler)
 		return nil
 	}
-	return registerHandlers(engine, wildcardPattern(prefix), handler)
+	if err := registerHandlers(engine, wildcardPattern(prefix), handler); err != nil {
+		_ = rootHandle.Close()
+		return err
+	}
+	return nil
 }
 
-// MountFile mounts one file below a URL path.
+// MountFile mounts one file below a URL path. The file's parent directory is
+// held through os.Root so replacing path components after registration cannot
+// redirect the route to a different directory tree.
 func MountFile(engine *gin.Engine, relative, filePath string, options Options) error {
 	if engine == nil {
 		return fmt.Errorf("static engine is nil")
@@ -113,18 +124,40 @@ func MountFile(engine *gin.Engine, relative, filePath string, options Options) e
 	if err != nil {
 		return fmt.Errorf("resolve static file %q: %w", filePath, err)
 	}
+	rootHandle, err := os.OpenRoot(filepath.Dir(resolvedPath))
+	if err != nil {
+		return fmt.Errorf("open static file root %q: %w", filePath, err)
+	}
+	fileName := filepath.Base(resolvedPath)
 	allowed := extensionAllowlist(options)
 	handler := func(context *gin.Context) {
-		if !validEscapedURLPath(context.Request.URL.EscapedPath()) || !allowedFile(resolvedPath, allowed) {
+		if !validEscapedURLPath(context.Request.URL.EscapedPath()) || !allowedFile(fileName, allowed) {
 			context.Status(http.StatusNotFound)
 			return
 		}
-		if options.CacheControl != "" {
-			context.Header("Cache-Control", options.CacheControl)
+		linkInfo, err := rootHandle.Lstat(fileName)
+		if err != nil || linkInfo.Mode()&os.ModeSymlink != 0 || linkInfo.IsDir() {
+			context.Status(http.StatusNotFound)
+			return
 		}
-		http.ServeFile(context.Writer, context.Request, resolvedPath)
+		file, err := rootHandle.Open(fileName)
+		if err != nil {
+			context.Status(http.StatusNotFound)
+			return
+		}
+		info, err := file.Stat()
+		if err != nil || info.IsDir() {
+			_ = file.Close()
+			context.Status(http.StatusNotFound)
+			return
+		}
+		serveLocalFile(context, file, info, fileName, options.CacheControl)
 	}
-	return registerHandlers(engine, relative, handler)
+	if err := registerHandlers(engine, relative, handler); err != nil {
+		_ = rootHandle.Close()
+		return err
+	}
+	return nil
 }
 
 // MountFS mounts an io/fs filesystem, including an embed.FS.
@@ -272,43 +305,54 @@ func validMountPath(value string) bool {
 	return err == nil && decoded == value
 }
 
-func localFile(root, requestedPath, index string) (string, fs.FileInfo, bool) {
-	candidate := filepath.Join(root, filepath.FromSlash(requestedPath))
-	if !pathWithinRoot(root, candidate) {
-		return "", nil, false
+func localFile(root *os.Root, requestedPath, index string) (*os.File, string, fs.FileInfo, bool) {
+	if root == nil || !validFilePath(requestedPath) {
+		return nil, "", nil, false
 	}
-	info, err := os.Stat(candidate)
+	candidate := requestedPath
+	file, err := root.Open(filepath.FromSlash(candidate))
 	if err != nil {
-		return "", nil, false
+		return nil, "", nil, false
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, "", nil, false
 	}
 	if info.IsDir() {
-		candidate = filepath.Join(candidate, index)
-		if !pathWithinRoot(root, candidate) {
-			return "", nil, false
+		_ = file.Close()
+		candidate = path.Join(candidate, index)
+		if !validFilePath(candidate) {
+			return nil, "", nil, false
 		}
-		info, err = os.Stat(candidate)
+		file, err = root.Open(filepath.FromSlash(candidate))
+		if err != nil {
+			return nil, "", nil, false
+		}
+		info, err = file.Stat()
 		if err != nil || info.IsDir() {
-			return "", nil, false
+			_ = file.Close()
+			return nil, "", nil, false
 		}
 	}
-	return candidate, info, true
+	return file, candidate, info, true
 }
 
+// localPathEscapes is retained as an internal regression helper. os.Root does
+// the actual production enforcement and rejects both final and parent symlink
+// escapes at open time.
 func localPathEscapes(root, requestedPath string) bool {
-	candidate := filepath.Join(root, filepath.FromSlash(requestedPath))
-	for {
-		if info, err := os.Lstat(candidate); err == nil {
-			if info.Mode()&os.ModeSymlink != 0 {
-				return true
-			}
-			return !pathWithinRoot(root, candidate)
-		}
-		parent := filepath.Dir(candidate)
-		if parent == candidate {
-			return true
-		}
-		candidate = parent
+	rootHandle, err := os.OpenRoot(root)
+	if err != nil {
+		return true
 	}
+	defer rootHandle.Close()
+	file, err := rootHandle.Open(filepath.FromSlash(requestedPath))
+	if err != nil {
+		return true
+	}
+	_ = file.Close()
+	return false
 }
 
 func fsFile(filesystem fs.FS, requestedPath, index string) (string, fs.FileInfo, bool) {
@@ -346,24 +390,28 @@ func fsPathHasSymlink(filesystem fs.FS, name string) bool {
 	return false
 }
 
-func serveFallback(context *gin.Context, root, index string, allowed map[string]struct{}, enabled bool, cacheControl string) {
+func serveFallback(context *gin.Context, root *os.Root, index string, allowed map[string]struct{}, enabled bool, cacheControl string) {
 	if !enabled || !allowedFile(index, allowed) {
 		context.Status(http.StatusNotFound)
 		return
 	}
-	candidate, info, ok := localFile(root, index, index)
+	file, candidate, info, ok := localFile(root, index, index)
 	if !ok || !allowedFile(candidate, allowed) {
+		if file != nil {
+			_ = file.Close()
+		}
 		context.Status(http.StatusNotFound)
 		return
 	}
-	serveLocalFile(context, candidate, info, cacheControl)
+	serveLocalFile(context, file, info, candidate, cacheControl)
 }
 
-func serveLocalFile(context *gin.Context, candidate string, _ fs.FileInfo, cacheControl string) {
+func serveLocalFile(context *gin.Context, file *os.File, info fs.FileInfo, name, cacheControl string) {
+	defer file.Close()
 	if cacheControl != "" {
 		context.Header("Cache-Control", cacheControl)
 	}
-	http.ServeFile(context.Writer, context.Request, candidate)
+	http.ServeContent(context.Writer, context.Request, name, info.ModTime(), file)
 }
 
 func serveFSFallback(context *gin.Context, filesystem fs.FS, index string, allowed map[string]struct{}, enabled bool, cacheControl string, fileServer http.Handler) {
@@ -427,17 +475,4 @@ func wildcardPattern(prefix string) string {
 		return "/*filepath"
 	}
 	return prefix + "/*filepath"
-}
-
-func pathWithinRoot(root, candidate string) bool {
-	rootPath, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return false
-	}
-	candidatePath, err := filepath.EvalSymlinks(candidate)
-	if err != nil {
-		return false
-	}
-	relative, err := filepath.Rel(rootPath, candidatePath)
-	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator))
 }
