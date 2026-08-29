@@ -29,11 +29,11 @@ func RequestID() gin.HandlerFunc {
 	}
 }
 
-func BodyLimit(maxBytes int64) gin.HandlerFunc {
+func BodyLimit(maxBytes int64, failureHandlers ...FailureHandler) gin.HandlerFunc {
+	failure := firstFailureHandler(failureHandlers)
 	return func(context *gin.Context) {
 		if maxBytes > 0 && context.Request.ContentLength > maxBytes {
-			context.Abort()
-			context.JSON(http.StatusRequestEntityTooLarge, map[string]any{"code": 41300, "message": "request body is too large"})
+			writeFailure(context, failure, http.StatusRequestEntityTooLarge, 41300, "request body is too large")
 			return
 		}
 		if maxBytes > 0 && context.Request.Body != nil {
@@ -41,6 +41,24 @@ func BodyLimit(maxBytes int64) gin.HandlerFunc {
 		}
 		context.Next()
 	}
+}
+
+func firstFailureHandler(handlers []FailureHandler) FailureHandler {
+	for _, handler := range handlers {
+		if handler != nil {
+			return handler
+		}
+	}
+	return nil
+}
+
+func writeFailure(context *gin.Context, handler FailureHandler, status, code int, message string) {
+	context.Abort()
+	if handler != nil {
+		handler(context, status, code, message)
+		return
+	}
+	context.JSON(status, map[string]any{"code": code, "message": message})
 }
 
 func validRequestID(value string) bool {
@@ -55,14 +73,14 @@ func validRequestID(value string) bool {
 	return true
 }
 
-func HostValidation(allowed []string) gin.HandlerFunc {
+func HostValidation(allowed []string, failureHandlers ...FailureHandler) gin.HandlerFunc {
+	failure := firstFailureHandler(failureHandlers)
 	return func(context *gin.Context) {
 		if len(allowed) == 0 || HostAllowed(context.Request.Host, allowed) {
 			context.Next()
 			return
 		}
-		context.Abort()
-		context.JSON(http.StatusMisdirectedRequest, map[string]any{"code": 42100, "message": "invalid host"})
+		writeFailure(context, failure, http.StatusMisdirectedRequest, 42100, "invalid host")
 	}
 }
 
@@ -93,7 +111,8 @@ func normalizeHost(value string) string {
 	return strings.TrimSuffix(value, ".")
 }
 
-func CSRF(options CSRFOptions) gin.HandlerFunc {
+func CSRF(options CSRFOptions, failureHandlers ...FailureHandler) gin.HandlerFunc {
+	failure := firstFailureHandler(failureHandlers)
 	if options.CookieName == "" {
 		options.CookieName = "csrf_token"
 	}
@@ -108,8 +127,7 @@ func CSRF(options CSRFOptions) gin.HandlerFunc {
 		if err != nil || cookie.Value == "" {
 			cookieValue, tokenErr := NewSecureToken()
 			if tokenErr != nil {
-				context.Abort()
-				context.JSON(http.StatusInternalServerError, map[string]any{"code": 50000, "message": "internal server error"})
+				writeFailure(context, failure, http.StatusInternalServerError, 50000, "internal server error")
 				return
 			}
 			http.SetCookie(context.Writer, &http.Cookie{
@@ -124,8 +142,7 @@ func CSRF(options CSRFOptions) gin.HandlerFunc {
 		}
 		headerValue := context.GetHeader(options.HeaderName)
 		if headerValue == "" || subtle.ConstantTimeCompare([]byte(headerValue), []byte(cookie.Value)) != 1 {
-			context.Abort()
-			context.JSON(http.StatusForbidden, map[string]any{"code": 40300, "message": "CSRF token is invalid"})
+			writeFailure(context, failure, http.StatusForbidden, 40300, "CSRF token is invalid")
 			return
 		}
 		context.Next()
