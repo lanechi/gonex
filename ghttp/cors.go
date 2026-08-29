@@ -21,19 +21,25 @@ type CORSOptions struct {
 }
 
 func (server *Server) EnableCORS(options CORSOptions) error {
+	options = cloneCORSOptions(options)
+	var handler gin.HandlerFunc
+	var err error
+	if options.Enabled {
+		handler, err = newCORSHandler(options)
+		if err != nil {
+			return err
+		}
+	}
+
 	server.settingsMu.Lock()
 	defer server.settingsMu.Unlock()
-	server.options.CORS = optional[CORSOptions]{Value: options, Set: true}
+	server.options.CORS = optional[CORSOptions]{Value: cloneCORSOptions(options), Set: true}
 	if !options.Enabled {
 		server.corsOptions = nil
 		server.corsHandler = nil
 		return nil
 	}
-	copy := options
-	handler, err := newCORSHandler(copy)
-	if err != nil {
-		return err
-	}
+	copy := cloneCORSOptions(options)
 	server.corsOptions = &copy
 	server.corsHandler = handler
 	return nil
@@ -46,10 +52,13 @@ func (server *Server) configureCORSHandler() error {
 		server.corsHandler = nil
 		return nil
 	}
-	handler, err := newCORSHandler(*server.corsOptions)
+	options := cloneCORSOptions(*server.corsOptions)
+	handler, err := newCORSHandler(options)
 	if err != nil {
 		return err
 	}
+	server.corsOptions = &options
+	server.options.CORS = optional[CORSOptions]{Value: cloneCORSOptions(options), Set: true}
 	server.corsHandler = handler
 	return nil
 }
@@ -68,6 +77,7 @@ func corsMiddleware(server *Server) gin.HandlerFunc {
 }
 
 func newCORSHandler(options CORSOptions) (gin.HandlerFunc, error) {
+	options = cloneCORSOptions(options)
 	configuration := cors.Config{
 		AllowOrigins:     options.AllowOrigins,
 		AllowMethods:     options.AllowMethods,
@@ -98,4 +108,12 @@ func newCORSHandler(options CORSOptions) (gin.HandlerFunc, error) {
 		return nil, fmt.Errorf("invalid CORS configuration: %w", err)
 	}
 	return cors.New(configuration), nil
+}
+
+func cloneCORSOptions(options CORSOptions) CORSOptions {
+	options.AllowOrigins = append([]string(nil), options.AllowOrigins...)
+	options.AllowMethods = append([]string(nil), options.AllowMethods...)
+	options.AllowHeaders = append([]string(nil), options.AllowHeaders...)
+	options.ExposeHeaders = append([]string(nil), options.ExposeHeaders...)
+	return options
 }
