@@ -214,9 +214,6 @@ func (configuration *ViperConfig) GetBool(key string) bool {
 }
 
 func (configuration *ViperConfig) Unmarshal(target any) error {
-	// Viper's AutomaticEnv is applied by Get, but environment values are not
-	// included in AllSettings/Unmarshal. Rebuild the known settings through
-	// the effective getter so YAML, .env, system ENV, and Set are consistent.
 	effective := viper.New()
 	keys := configKeys(target)
 	configuration.mu.RLock()
@@ -234,9 +231,6 @@ func (configuration *ViperConfig) Unmarshal(target any) error {
 		}
 	}
 	configuration.mu.RUnlock()
-
-	// Decoding can invoke target-defined TextUnmarshalers, so it must happen
-	// after the configuration snapshot is complete and unlocked.
 	return effective.Unmarshal(target, viper.DecodeHook(mapstructure.ComposeDecodeHookFunc(
 		mapstructure.StringToTimeDurationHookFunc(),
 		mapstructure.StringToWeakSliceHookFunc(","),
@@ -303,26 +297,13 @@ func (configuration *ViperConfig) externalValueLocked(key string) (any, bool) {
 	if value, ok := configuration.overrides[normalizedKey]; ok {
 		return value, true
 	}
-	keys := envKeys(key)
-	for _, environmentKey := range keys {
+	for _, environmentKey := range envKeys(key) {
 		if value, ok := os.LookupEnv(environmentKey); ok {
 			return value, true
 		}
 	}
-	for _, environmentKey := range keys {
+	for _, environmentKey := range envKeys(key) {
 		if value, ok := configuration.dotenv[environmentKey]; ok {
-			return value, true
-		}
-	}
-	compactKey := compactEnvKey(keys[0])
-	for _, entry := range os.Environ() {
-		environmentKey, value, ok := strings.Cut(entry, "=")
-		if ok && compactEnvKey(environmentKey) == compactKey {
-			return value, true
-		}
-	}
-	for environmentKey, value := range configuration.dotenv {
-		if compactEnvKey(environmentKey) == compactKey {
 			return value, true
 		}
 	}
@@ -354,7 +335,6 @@ func collectConfigKeys(valueType reflect.Type, prefix string, keys *[]string, vi
 	}
 	visiting[valueType] = struct{}{}
 	defer delete(visiting, valueType)
-
 	for index := 0; index < valueType.NumField(); index++ {
 		field := valueType.Field(index)
 		if !field.IsExported() {
@@ -400,10 +380,6 @@ func isConfigLeafType(valueType reflect.Type) bool {
 	}
 	textUnmarshaler := reflect.TypeFor[encoding.TextUnmarshaler]()
 	return valueType.Implements(textUnmarshaler) || reflect.PointerTo(valueType).Implements(textUnmarshaler)
-}
-
-func compactEnvKey(key string) string {
-	return strings.ReplaceAll(strings.ToUpper(strings.TrimSpace(key)), "_", "")
 }
 
 func parseInt(value any) int {
@@ -494,8 +470,10 @@ func findProjectRoot(start string) string {
 		start = filepath.Dir(start)
 	}
 	for directory := start; ; directory = filepath.Dir(directory) {
-		if _, err := os.Stat(filepath.Join(directory, "go.mod")); err == nil {
-			return directory
+		for _, marker := range []string{"go.mod", ".git"} {
+			if _, statErr := os.Stat(filepath.Join(directory, marker)); statErr == nil {
+				return directory
+			}
 		}
 		parent := filepath.Dir(directory)
 		if parent == directory {
@@ -505,14 +483,13 @@ func findProjectRoot(start string) string {
 }
 
 func findDefaultConfig(root string) string {
-	for _, relative := range []string{
-		"config.yaml",
-		filepath.Join("config", "config.yaml"),
-		filepath.Join("manifest", "config", "config.yaml"),
+	for _, candidate := range []string{
+		filepath.Join(root, "config.yaml"),
+		filepath.Join(root, "config", "config.yaml"),
+		filepath.Join(root, "manifest", "config", "config.yaml"),
 	} {
-		path := filepath.Join(root, relative)
-		if info, err := os.Stat(path); err == nil && !info.IsDir() {
-			return path
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
 		}
 	}
 	return ""
