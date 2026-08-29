@@ -214,23 +214,22 @@ func (configuration *ViperConfig) GetBool(key string) bool {
 }
 
 func (configuration *ViperConfig) Unmarshal(target any) error {
+	// Viper normalizes known keys internally, which can erase camel-case word
+	// boundaries. Snapshot file/default values first, then re-apply target keys
+	// through the deterministic external lookup so ENV/.env still win.
 	effective := viper.New()
 	keys := configKeys(target)
 	configuration.mu.RLock()
-	seen := make(map[string]struct{})
 	for _, key := range configuration.viper.AllKeys() {
 		effective.Set(key, configuration.valueLocked(key))
-		seen[strings.ToLower(key)] = struct{}{}
 	}
 	for _, key := range keys {
-		normalizedKey := strings.ToLower(key)
-		if _, ok := seen[normalizedKey]; !ok {
-			if _, ok := configuration.externalValueLocked(key); ok {
-				effective.Set(key, configuration.valueLocked(key))
-			}
+		if value, ok := configuration.externalValueLocked(key); ok {
+			effective.Set(key, value)
 		}
 	}
 	configuration.mu.RUnlock()
+
 	return effective.Unmarshal(target, viper.DecodeHook(mapstructure.ComposeDecodeHookFunc(
 		mapstructure.StringToTimeDurationHookFunc(),
 		mapstructure.StringToWeakSliceHookFunc(","),
@@ -297,12 +296,13 @@ func (configuration *ViperConfig) externalValueLocked(key string) (any, bool) {
 	if value, ok := configuration.overrides[normalizedKey]; ok {
 		return value, true
 	}
-	for _, environmentKey := range envKeys(key) {
+	keys := envKeys(key)
+	for _, environmentKey := range keys {
 		if value, ok := os.LookupEnv(environmentKey); ok {
 			return value, true
 		}
 	}
-	for _, environmentKey := range envKeys(key) {
+	for _, environmentKey := range keys {
 		if value, ok := configuration.dotenv[environmentKey]; ok {
 			return value, true
 		}
@@ -335,6 +335,7 @@ func collectConfigKeys(valueType reflect.Type, prefix string, keys *[]string, vi
 	}
 	visiting[valueType] = struct{}{}
 	defer delete(visiting, valueType)
+
 	for index := 0; index < valueType.NumField(); index++ {
 		field := valueType.Field(index)
 		if !field.IsExported() {
