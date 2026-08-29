@@ -54,7 +54,7 @@ type stopAttempt struct {
 type jobRecord struct {
 	definition Job
 	inner      gocron.Job
-	gate       overlapGate
+	gate       *overlapGate
 }
 
 // SetDefaultLogger supplies a logger when the scheduler was not constructed
@@ -182,9 +182,7 @@ func (manager *manager) Add(job Job) error {
 	if manager == nil {
 		return ErrStopped
 	}
-	job.Name = strings.TrimSpace(job.Name)
-	job.Middleware = append([]Middleware(nil), job.Middleware...)
-
+	job = cloneJob(job)
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 	if err := validateJob(job, manager.location); err != nil {
@@ -196,7 +194,7 @@ func (manager *manager) Add(job Job) error {
 	if _, exists := manager.jobs[job.Name]; exists {
 		return fmt.Errorf("%w: %s", ErrDuplicateJob, job.Name)
 	}
-	record := &jobRecord{definition: job, gate: overlapGate{policy: job.OverlapPolicy}}
+	record := &jobRecord{definition: job, gate: &overlapGate{policy: job.OverlapPolicy}}
 	if manager.started {
 		if err := manager.installLocked(record); err != nil {
 			return err
@@ -204,6 +202,55 @@ func (manager *manager) Add(job Job) error {
 	}
 	manager.jobs[job.Name] = record
 	return nil
+}
+
+// replace atomically updates an existing built-in job while preserving its
+// overlap gate. Persistent Loader uses this private capability so a running old
+// version and a newly scheduled version cannot bypass SkipIfRunning/QueueOne.
+func (manager *manager) replace(job Job) error {
+	if manager == nil {
+		return ErrStopped
+	}
+	job = cloneJob(job)
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	if err := validateJob(job, manager.location); err != nil {
+		return err
+	}
+	if manager.stopped || manager.stopping {
+		return ErrStopped
+	}
+	old, exists := manager.jobs[job.Name]
+	if !exists {
+		return fmt.Errorf("%w: %s", ErrJobNotFound, job.Name)
+	}
+	if old.gate == nil {
+		old.gate = &overlapGate{policy: old.definition.OverlapPolicy}
+	}
+	old.gate.setPolicy(job.OverlapPolicy)
+	replacement := &jobRecord{definition: job, gate: old.gate}
+	if manager.started {
+		if err := manager.installLocked(replacement); err != nil {
+			old.gate.setPolicy(old.definition.OverlapPolicy)
+			return err
+		}
+		if old.inner != nil {
+			if err := manager.inner.RemoveJob(old.inner.ID()); err != nil {
+				_ = manager.inner.RemoveJob(replacement.inner.ID())
+				old.gate.setPolicy(old.definition.OverlapPolicy)
+				return fmt.Errorf("replace scheduler job %q: remove old job: %w", job.Name, err)
+			}
+		}
+	}
+	manager.jobs[job.Name] = replacement
+	return nil
+}
+
+func (manager *manager) validate(job Job) error {
+	if manager == nil {
+		return ErrStopped
+	}
+	return validateJob(cloneJob(job), manager.location)
 }
 
 // Remove deletes a job by name. Existing executions receive cancellation when
@@ -247,12 +294,16 @@ func (manager *manager) Jobs() []JobInfo {
 			nextRun, _ = record.inner.NextRun()
 			lastRun, _ = record.inner.LastRunStartedAt()
 		}
+		running := false
+		if record.gate != nil {
+			running = record.gate.isRunning()
+		}
 		jobs = append(jobs, JobInfo{
 			Name:     record.definition.Name,
 			Schedule: record.definition.Schedule,
 			NextRun:  nextRun,
 			LastRun:  lastRun,
-			Running:  record.gate.isRunning(),
+			Running:  running,
 		})
 	}
 	sort.Slice(jobs, func(left, right int) bool { return jobs[left].Name < jobs[right].Name })
@@ -277,4 +328,10 @@ func (manager *manager) Use(middleware ...Middleware) error {
 	}
 	manager.middleware = append(manager.middleware, middleware...)
 	return nil
+}
+
+func cloneJob(job Job) Job {
+	job.Name = strings.TrimSpace(job.Name)
+	job.Middleware = append([]Middleware(nil), job.Middleware...)
+	return job
 }
