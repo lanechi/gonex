@@ -15,10 +15,10 @@ func NewBinder(requestType reflect.Type) (*Binder, error) {
 		return nil, fmt.Errorf("request type must be a pointer to a struct")
 	}
 	binder := &Binder{MaxMultipartMemory: 32 << 20}
-	if err := collectFieldBindings(requestType.Elem(), nil, &binder.Fields); err != nil {
+	if err := collectFieldBindings(requestType.Elem(), nil, &binder.fields); err != nil {
 		return nil, err
 	}
-	for _, field := range binder.Fields {
+	for _, field := range binder.fields {
 		if field.Query != "" {
 			binder.hasQuery = true
 			break
@@ -43,7 +43,7 @@ func (binder *Binder) Bind(ginContext *gin.Context, target any) error {
 	if !targetValue.IsValid() || targetValue.Kind() != reflect.Ptr || targetValue.IsNil() {
 		return &BindingError{Code: 40001, HTTPStatus: http.StatusBadRequest, Message: "request target must be a non-nil pointer"}
 	}
-	if len(binder.Fields) == 0 && (request.Body == nil || request.Body == http.NoBody) && request.Header.Get("Content-Type") == "" {
+	if len(binder.fields) == 0 && (request.Body == nil || request.Body == http.NoBody) && request.Header.Get("Content-Type") == "" {
 		return nil
 	}
 	contentType := normalizeContentType(request.Header.Get("Content-Type"))
@@ -58,7 +58,7 @@ func (binder *Binder) Bind(ginContext *gin.Context, target any) error {
 
 func (binder *Binder) bindSources(ginContext *gin.Context, target reflect.Value) error {
 	request := ginContext.Request
-	for _, field := range binder.Fields {
+	for _, field := range binder.fields {
 		if bound, err := bindFile(target, request, field); err != nil || bound {
 			if err != nil {
 				return err
