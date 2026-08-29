@@ -34,7 +34,7 @@ func TestPersistentSingletonLockMissRecordsSkipped(t *testing.T) {
 	if called { t.Fatal("handler ran without singleton lock") }
 	recorder.mu.Lock()
 	defer recorder.mu.Unlock()
-	if len(recorder.records) != 2 || recorder.records[1].Status != RunSkipped {
+	if len(recorder.records) != 2 || recorder.records[0].Status != RunRunning || recorder.records[1].Status != RunSkipped {
 		t.Fatalf("records = %#v", recorder.records)
 	}
 }
@@ -57,7 +57,7 @@ func TestPersistentPanicFinalizesRunRecord(t *testing.T) {
 	}
 }
 
-func TestPersistentRecorderErrorsArePropagated(t *testing.T) {
+func TestPersistentRecorderErrorsDoNotSuppressHandler(t *testing.T) {
 	startFailure := errors.New("start failed")
 	startRecorder := &errorRecorder{startErr: startFailure}
 	loader, err := NewLoader(&memoryJobStore{}, persistentRegistry(t), newTestScheduler(), WithRunRecorder(startRecorder))
@@ -66,15 +66,18 @@ func TestPersistentRecorderErrorsArePropagated(t *testing.T) {
 	if err := loader.execute(context.Background(), func(context.Context, Execution) error { called = true; return nil }, persistentDefinition("1", "job", 1)); !errors.Is(err, startFailure) {
 		t.Fatalf("start error = %v", err)
 	}
-	if called { t.Fatal("handler ran after recorder Start failure") }
+	if !called { t.Fatal("recorder Start failure suppressed business handler") }
+	if startRecorder.finished != 1 { t.Fatalf("finish calls = %d", startRecorder.finished) }
 
 	finishFailure := errors.New("finish failed")
 	finishRecorder := &errorRecorder{finishErr: finishFailure}
 	loader, err = NewLoader(&memoryJobStore{}, persistentRegistry(t), newTestScheduler(), WithRunRecorder(finishRecorder))
 	if err != nil { t.Fatal(err) }
-	if err := loader.execute(context.Background(), func(context.Context, Execution) error { return nil }, persistentDefinition("2", "job2", 1)); !errors.Is(err, finishFailure) {
+	called = false
+	if err := loader.execute(context.Background(), func(context.Context, Execution) error { called = true; return nil }, persistentDefinition("2", "job2", 1)); !errors.Is(err, finishFailure) {
 		t.Fatalf("finish error = %v", err)
 	}
+	if !called { t.Fatal("handler did not run") }
 }
 
 func TestPersistentExecutionPayloadIsIsolated(t *testing.T) {
@@ -85,7 +88,6 @@ func TestPersistentExecutionPayloadIsIsolated(t *testing.T) {
 	original := append([]byte(nil), definition.Payload...)
 	if err := loader.execute(context.Background(), func(_ context.Context, execution Execution) error {
 		execution.Definition.Payload[0] = 'x'
-		execution.Payload[1] = 'y'
 		return nil
 	}, definition); err != nil { t.Fatal(err) }
 	if string(definition.Payload) != string(original) {
@@ -103,6 +105,22 @@ func TestNewLoaderNormalizesTypedNilRecorder(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	if loader.recorder != nil { t.Fatal("typed nil recorder was retained") }
 	if err := loader.execute(context.Background(), func(context.Context, Execution) error { return nil }, persistentDefinition("1", "job", 1)); err != nil { t.Fatal(err) }
+}
+
+func TestPersistentExecutionClassifiesCancellation(t *testing.T) {
+	recorder := &testRecorder{}
+	loader, err := NewLoader(&memoryJobStore{}, persistentRegistry(t), newTestScheduler(), WithRunRecorder(recorder))
+	if err != nil { t.Fatal(err) }
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := loader.execute(ctx, func(context.Context, Execution) error { return nil }, persistentDefinition("1", "cancel", 1)); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled execution error = %v", err)
+	}
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	if len(recorder.records) != 2 || recorder.records[1].Status != RunCanceled {
+		t.Fatalf("records = %#v", recorder.records)
+	}
 }
 
 func TestRunIDsAreUnique(t *testing.T) {
