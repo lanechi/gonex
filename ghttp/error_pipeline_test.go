@@ -4,9 +4,11 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/lanechi/gonex/logging"
 )
 
@@ -28,7 +30,7 @@ func TestServerMiddlewareFailuresUseConfiguredErrorHandler(t *testing.T) {
 			WithRequestLimits(1, 0, 0),
 			WithErrorHandler(customMiddlewareErrorHandler),
 		)
-		server.Engine().POST("/body", func(ctx *Context) {})
+		server.Engine().POST("/body", func(ctx *gin.Context) { ctx.Status(http.StatusOK) })
 		request := httptest.NewRequest(http.MethodPost, "/body", strings.NewReader("xx"))
 		response := httptest.NewRecorder()
 		server.ServeHTTP(response, request)
