@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-co-op/gocron/v2"
@@ -56,12 +57,69 @@ type jobRecord struct {
 	inner      gocron.Job
 	cleanup    []gocron.Job
 	gate       *overlapGate
+	ready      chan struct{}
+	readyOnce  sync.Once
+	active     atomic.Bool
 }
 
 type jobSnapshot struct {
 	definition Job
 	inner      gocron.Job
 	gate       *overlapGate
+}
+
+func newJobRecord(job Job, gate *overlapGate, published bool) *jobRecord {
+	if gate == nil {
+		gate = &overlapGate{policy: job.OverlapPolicy}
+	}
+	record := &jobRecord{definition: job, gate: gate, ready: make(chan struct{})}
+	if published {
+		record.publish()
+	}
+	return record
+}
+
+func (record *jobRecord) publish() {
+	if record == nil {
+		return
+	}
+	record.active.Store(true)
+	record.readyOnce.Do(func() { close(record.ready) })
+}
+
+func (record *jobRecord) abort() {
+	if record == nil {
+		return
+	}
+	record.active.Store(false)
+	record.readyOnce.Do(func() { close(record.ready) })
+}
+
+func (record *jobRecord) deactivate() {
+	if record != nil {
+		record.active.Store(false)
+	}
+}
+
+func (record *jobRecord) runnable(ctx context.Context) bool {
+	if record == nil {
+		return false
+	}
+	if record.active.Load() {
+		return true
+	}
+	if record.ready == nil {
+		return false
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-record.ready:
+		return record.active.Load()
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // SetDefaultLogger supplies a logger when the scheduler was not constructed
@@ -196,19 +254,29 @@ func (manager *manager) Add(job Job) error {
 	if _, exists := manager.jobs[job.Name]; exists {
 		return fmt.Errorf("%w: %s", ErrDuplicateJob, job.Name)
 	}
-	record := &jobRecord{definition: job, gate: &overlapGate{policy: job.OverlapPolicy}}
+
+	// Jobs registered before Start are already committed framework state. Jobs
+	// added to a running engine remain unpublished until NewJob succeeds and the
+	// manager map is updated, so an immediate engine trigger cannot run before
+	// Add commits.
+	record := newJobRecord(job, nil, !manager.started)
 	if manager.started {
 		if err := manager.installLocked(record); err != nil {
+			record.abort()
 			return err
 		}
+		manager.jobs[job.Name] = record
+		record.publish()
+		return nil
 	}
 	manager.jobs[job.Name] = record
 	return nil
 }
 
 // Replace atomically updates an existing job while preserving its overlap
-// gate. Engine cleanup failures remain attached to the registered record so no
-// scheduled engine job becomes invisible to later Remove/Replace attempts.
+// gate. A replacement remains unpublished until the old engine job is removed
+// and the manager state commits. Engine cleanup failures remain attached to the
+// registered record so no engine handle becomes invisible to later cleanup.
 func (manager *manager) Replace(job Job) error {
 	if manager == nil {
 		return ErrStopped
@@ -231,12 +299,18 @@ func (manager *manager) Replace(job Job) error {
 		gate = &overlapGate{policy: old.definition.OverlapPolicy}
 		old.gate = gate
 	}
-	replacement := &jobRecord{definition: job, gate: gate}
+
+	replacement := newJobRecord(job, gate, !manager.started)
 	if manager.started {
 		if err := manager.installLocked(replacement); err != nil {
+			replacement.abort()
 			return err
 		}
 		if err := manager.removeEngineJobsLocked(old); err != nil {
+			// A pending RunImmediately or due schedule may already be waiting in
+			// the engine task wrapper. Abort first so cleanup can never release a
+			// replacement handler that did not commit.
+			replacement.abort()
 			cleanupErr := manager.removeEngineJobsLocked(replacement)
 			if replacement.inner != nil {
 				old.cleanup = append(old.cleanup, replacement.inner)
@@ -252,8 +326,13 @@ func (manager *manager) Replace(job Job) error {
 			)
 		}
 	}
+
+	old.deactivate()
 	gate.setPolicy(job.OverlapPolicy)
 	manager.jobs[job.Name] = replacement
+	if manager.started {
+		replacement.publish()
+	}
 	return nil
 }
 
@@ -264,20 +343,17 @@ func wrapCleanupError(name string, err error) error {
 	return fmt.Errorf("replace scheduler job %q: rollback replacement engine job: %w", name, err)
 }
 
-// removeEngineJobsLocked removes every engine handle owned by record and keeps
-// failed removals attached to that record for a later cleanup attempt.
+// removeEngineJobsLocked removes every engine handle owned by record. Stale
+// cleanup handles are removed before the primary handle; if stale cleanup
+// fails, the primary scheduled job remains installed, preserving Add/Replace/
+// Remove transactional semantics. Failed cleanup handles stay attached for a
+// later attempt.
 func (manager *manager) removeEngineJobsLocked(record *jobRecord) error {
 	if record == nil || manager.inner == nil {
 		return nil
 	}
+
 	var removeErrors []error
-	if record.inner != nil {
-		if err := manager.inner.RemoveJob(record.inner.ID()); err != nil {
-			removeErrors = append(removeErrors, err)
-		} else {
-			record.inner = nil
-		}
-	}
 	if len(record.cleanup) > 0 {
 		remaining := make([]gocron.Job, 0, len(record.cleanup))
 		for _, pending := range record.cleanup {
@@ -290,8 +366,18 @@ func (manager *manager) removeEngineJobsLocked(record *jobRecord) error {
 			}
 		}
 		record.cleanup = remaining
+		if len(removeErrors) > 0 {
+			return errors.Join(removeErrors...)
+		}
 	}
-	return errors.Join(removeErrors...)
+
+	if record.inner != nil {
+		if err := manager.inner.RemoveJob(record.inner.ID()); err != nil {
+			return err
+		}
+		record.inner = nil
+	}
+	return nil
 }
 
 // Validate checks a job against the exact location and validation rules used
@@ -328,6 +414,7 @@ func (manager *manager) Remove(name string) error {
 			return fmt.Errorf("remove scheduler job %q: %w", name, err)
 		}
 	}
+	record.deactivate()
 	delete(manager.jobs, name)
 	return nil
 }
