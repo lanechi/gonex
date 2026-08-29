@@ -15,6 +15,7 @@ func TestTransactionRejectsDirectoryDeleteAndParentChildConflicts(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer transaction.Rollback()
 	if err := transaction.Delete("dir"); err == nil {
 		t.Fatal("directory delete was accepted")
 	}
@@ -39,6 +40,7 @@ func TestTransactionCommitRevalidatesSymlinkParents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer transaction.Rollback()
 	if err := transaction.Write("generated/file.go", []byte("package generated\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
