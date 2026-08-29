@@ -44,7 +44,22 @@ func (gate *overlapGate) run(handler func()) (executed, queued bool) {
 }
 
 func (gate *overlapGate) isRunning() bool {
+	if gate == nil {
+		return false
+	}
 	gate.mu.Lock()
 	defer gate.mu.Unlock()
 	return gate.active > 0
+}
+
+func (gate *overlapGate) setPolicy(policy OverlapPolicy) {
+	if gate == nil {
+		return
+	}
+	gate.mu.Lock()
+	gate.policy = policy
+	if policy != QueueOne {
+		gate.queued = false
+	}
+	gate.mu.Unlock()
 }
