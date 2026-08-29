@@ -19,6 +19,8 @@ import (
 
 var ErrNotFound = errors.New("session not found")
 
+const minimumCookieSecretBytes = 32
+
 // Session is the application-facing session contract. Values must be JSON-safe;
 // implementations return detached values so callers cannot mutate session state
 // through shared maps, slices, pointers, or struct fields.
@@ -57,16 +59,39 @@ func NewMemoryStorage() *MemoryStorage {
 }
 
 func (storage *MemoryStorage) Get(_ context.Context, id string) (map[string]any, error) {
+	now := time.Now()
 	storage.mu.RLock()
 	entry, ok := storage.entries[id]
+	if ok && !memoryEntryExpired(entry, now) {
+		values := sessionvalue.CloneMap(entry.values)
+		storage.mu.RUnlock()
+		return values, nil
+	}
 	storage.mu.RUnlock()
-	if !ok || (!entry.expiresAt.IsZero() && time.Now().After(entry.expiresAt)) {
-		if ok {
-			_ = storage.Delete(context.Background(), id)
-		}
+	if !ok {
 		return nil, ErrNotFound
 	}
-	return sessionvalue.CloneMap(entry.values), nil
+
+	// Re-check under the write lock before deleting. A concurrent Set may have
+	// replaced the expired entry after the optimistic read above.
+	storage.mu.Lock()
+	entry, ok = storage.entries[id]
+	if !ok {
+		storage.mu.Unlock()
+		return nil, ErrNotFound
+	}
+	if memoryEntryExpired(entry, time.Now()) {
+		delete(storage.entries, id)
+		storage.mu.Unlock()
+		return nil, ErrNotFound
+	}
+	values := sessionvalue.CloneMap(entry.values)
+	storage.mu.Unlock()
+	return values, nil
+}
+
+func memoryEntryExpired(entry memorySessionEntry, now time.Time) bool {
+	return !entry.expiresAt.IsZero() && now.After(entry.expiresAt)
 }
 
 func (storage *MemoryStorage) Set(_ context.Context, id string, values map[string]any, ttl time.Duration) error {
@@ -104,13 +129,19 @@ type CookieStorage struct {
 	familyExpiries map[[sha256.Size]byte]int64
 }
 
-func NewCookieStorage(secret []byte) *CookieStorage {
+// NewCookieStorage creates signed-cookie session storage. The HMAC key must be
+// at least 32 bytes of application-supplied secret material; hashing or padding
+// a weak password does not increase its entropy and is intentionally rejected.
+func NewCookieStorage(secret []byte) (*CookieStorage, error) {
+	if len(secret) < minimumCookieSecretBytes {
+		return nil, fmt.Errorf("cookie session secret must be at least %d bytes", minimumCookieSecretBytes)
+	}
 	return &CookieStorage{
 		secret:         append([]byte(nil), secret...),
 		revoked:        make(map[[sha256.Size]byte]int64),
 		families:       make(map[[sha256.Size]byte]int64),
 		familyExpiries: make(map[[sha256.Size]byte]int64),
-	}
+	}, nil
 }
 
 type cookiePayload struct {
