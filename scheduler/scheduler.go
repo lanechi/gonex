@@ -54,6 +54,7 @@ type stopAttempt struct {
 type jobRecord struct {
 	definition Job
 	inner      gocron.Job
+	cleanup    []gocron.Job
 	gate       *overlapGate
 }
 
@@ -206,9 +207,8 @@ func (manager *manager) Add(job Job) error {
 }
 
 // Replace atomically updates an existing job while preserving its overlap
-// gate. The old overlap policy remains active until the replacement is fully
-// installed and the old engine job has been removed, preventing a transition
-// to a more permissive policy from opening a temporary overlap window.
+// gate. Engine cleanup failures remain attached to the registered record so no
+// scheduled engine job becomes invisible to later Remove/Replace attempts.
 func (manager *manager) Replace(job Job) error {
 	if manager == nil {
 		return ErrStopped
@@ -236,18 +236,62 @@ func (manager *manager) Replace(job Job) error {
 		if err := manager.installLocked(replacement); err != nil {
 			return err
 		}
-		if old.inner != nil {
-			if err := manager.inner.RemoveJob(old.inner.ID()); err != nil {
-				if replacement.inner != nil {
-					_ = manager.inner.RemoveJob(replacement.inner.ID())
-				}
-				return fmt.Errorf("replace scheduler job %q: remove old job: %w", job.Name, err)
+		if err := manager.removeEngineJobsLocked(old); err != nil {
+			cleanupErr := manager.removeEngineJobsLocked(replacement)
+			if replacement.inner != nil {
+				old.cleanup = append(old.cleanup, replacement.inner)
+				replacement.inner = nil
 			}
+			if len(replacement.cleanup) > 0 {
+				old.cleanup = append(old.cleanup, replacement.cleanup...)
+				replacement.cleanup = nil
+			}
+			return errors.Join(
+				fmt.Errorf("replace scheduler job %q: remove old engine job: %w", job.Name, err),
+				wrapCleanupError(job.Name, cleanupErr),
+			)
 		}
 	}
 	gate.setPolicy(job.OverlapPolicy)
 	manager.jobs[job.Name] = replacement
 	return nil
+}
+
+func wrapCleanupError(name string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("replace scheduler job %q: rollback replacement engine job: %w", name, err)
+}
+
+// removeEngineJobsLocked removes every engine handle owned by record and keeps
+// failed removals attached to that record for a later cleanup attempt.
+func (manager *manager) removeEngineJobsLocked(record *jobRecord) error {
+	if record == nil || manager.inner == nil {
+		return nil
+	}
+	var removeErrors []error
+	if record.inner != nil {
+		if err := manager.inner.RemoveJob(record.inner.ID()); err != nil {
+			removeErrors = append(removeErrors, err)
+		} else {
+			record.inner = nil
+		}
+	}
+	if len(record.cleanup) > 0 {
+		remaining := make([]gocron.Job, 0, len(record.cleanup))
+		for _, pending := range record.cleanup {
+			if pending == nil {
+				continue
+			}
+			if err := manager.inner.RemoveJob(pending.ID()); err != nil {
+				removeErrors = append(removeErrors, err)
+				remaining = append(remaining, pending)
+			}
+		}
+		record.cleanup = remaining
+	}
+	return errors.Join(removeErrors...)
 }
 
 // Validate checks a job against the exact location and validation rules used
@@ -279,8 +323,8 @@ func (manager *manager) Remove(name string) error {
 	if !exists {
 		return fmt.Errorf("%w: %s", ErrJobNotFound, name)
 	}
-	if manager.started && record.inner != nil {
-		if err := manager.inner.RemoveJob(record.inner.ID()); err != nil {
+	if manager.started {
+		if err := manager.removeEngineJobsLocked(record); err != nil {
 			return fmt.Errorf("remove scheduler job %q: %w", name, err)
 		}
 	}
