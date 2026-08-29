@@ -17,6 +17,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - run: go mod tidy -diff
       - run: go test ./...
       - run: go test -race ./...
       - run: go vet ./...
@@ -33,6 +34,7 @@ jobs:
         with:
           go-version-file: gx/go.mod
           cache-dependency-path: gx/go.sum
+      - run: go mod tidy -diff
       - run: go test ./...
       - run: go test -race ./...
       - run: go vet ./...
@@ -47,6 +49,8 @@ jobs:
           - examples/demo
           - examples/quick-demo
           - benchmarks/gx
+          - contrib/gormlog
+          - contrib/redislog
     defaults:
       run:
         working-directory: ${{ matrix.module }}
@@ -55,9 +59,36 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: ${{ matrix.module }}/go.mod
-          cache-dependency-path: ${{ matrix.module }}/go.sum
+          cache: false
+      - run: go mod tidy -diff
       - run: go test ./...
       - run: go vet ./...
+
+  api-compat:
+    name: v1 API compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Check compatibility with latest stable v1
+        shell: bash
+        run: |
+          set -euo pipefail
+          baseline="$(git tag --list 'v1.*' --sort=-v:refname | grep -E '^v1\.[0-9]+\.[0-9]+$' | head -n 1 || true)"
+          if [ -z "$baseline" ]; then
+            echo "No stable v1 tag exists; pre-v1 API cleanup remains intentionally unfrozen."
+            exit 0
+          fi
+          rest="${baseline#v1.}"
+          minor="${rest%%.*}"
+          proposed="v1.$((minor + 1)).0"
+          go install golang.org/x/exp/cmd/gorelease@3d80eb74bc5bc9b889252996f1ad776b9e8e0667
+          gorelease -base="$baseline" -version="$proposed"
 
   portability:
     name: portability (${{ matrix.os }})
