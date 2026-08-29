@@ -1,14 +1,18 @@
 package dao
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"golang.org/x/mod/modfile"
 )
+
+const goModTidyTimeout = 2 * time.Minute
 
 func ensureModelDependencies(project Project, result *Result) error {
 	path := project.Resolve("go.mod")
@@ -47,11 +51,16 @@ func ensureModelDependencies(project Project, result *Result) error {
 }
 
 func runGoModTidy(projectRoot string) error {
-	command := exec.Command("go", "mod", "tidy")
+	ctx, cancel := context.WithTimeout(context.Background(), goModTidyTimeout)
+	defer cancel()
+	command := exec.CommandContext(ctx, "go", "mod", "tidy")
 	command.Dir = projectRoot
 	command.Stdout = os.Stdout
 	command.Stderr = os.Stderr
 	if err := command.Run(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return fmt.Errorf("run go mod tidy: %w", ctxErr)
+		}
 		return fmt.Errorf("run go mod tidy: %w", err)
 	}
 	return nil

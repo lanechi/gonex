@@ -20,3 +20,16 @@ type Logger interface {
 	Enabled(level Level) bool
 	Sync() error
 }
+
+// Close releases resources owned by a logger implementation when it exposes a
+// Close method. Loggers without owned resources remain compatible and are only
+// synchronized. Writers supplied through NewWithWriter remain caller-owned.
+func Close(logger Logger) error {
+	if logger == nil {
+		return nil
+	}
+	if closer, ok := logger.(interface{ Close() error }); ok {
+		return closer.Close()
+	}
+	return logger.Sync()
+}

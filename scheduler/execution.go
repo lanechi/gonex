@@ -8,7 +8,7 @@ import (
 )
 
 func (manager *manager) run(record *jobRecord, engineContext context.Context) {
-	executed, queued := record.gate.run(func() { manager.execute(record, engineContext) })
+	executed, queued := record.gate.runWithToken(record, func() { manager.execute(record, engineContext) })
 	if executed {
 		return
 	}

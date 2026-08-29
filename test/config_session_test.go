@@ -73,7 +73,7 @@ func TestCookieAndMemorySession(t *testing.T) {
 }
 
 func TestCookieSessionStorageAndSessionLifecycle(t *testing.T) {
-	storage := session.NewCookieStorage([]byte("test-secret"))
+	storage := mustCookieStorage(t, "test-cookie-session-secret-at-least-32-bytes")
 	server := ghttp.NewServer(ghttp.WithSessionManager(ghttp.NewSessionManager(storage, "sid", time.Hour)))
 	if err := server.Bind(&sessionController{}); err != nil {
 		t.Fatal(err)
@@ -126,4 +126,13 @@ func TestLifecycleHooksAndTrackedTasks(t *testing.T) {
 	if strings.Join(events, ",") != "start,started,shutdown,stop" {
 		t.Fatalf("lifecycle events=%v", events)
 	}
+}
+
+func mustCookieStorage(t *testing.T, secret string) *session.CookieStorage {
+	t.Helper()
+	storage, err := session.NewCookieStorage([]byte(secret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return storage
 }

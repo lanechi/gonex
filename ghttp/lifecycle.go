@@ -58,7 +58,7 @@ func (server *Server) schedulerLocationOrLocal() *time.Location {
 
 // RunTLS starts the server with a certificate and private key.
 func (server *Server) RunTLS(certFile, keyFile string) error {
-	return server.runWithSignals(true, certFile, keyFile)
+	return server.runWithSignalsAt("", true, certFile, keyFile)
 }
 
 // RunContext runs the server until the supplied context is canceled or the
@@ -67,20 +67,24 @@ func (server *Server) RunContext(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return server.runContext(ctx, server.tlsEnabled, server.tlsCertFile, server.tlsKeyFile)
+	return server.runContext(ctx, "", server.tlsEnabled, server.tlsCertFile, server.tlsKeyFile)
 }
 
 func (server *Server) runWithSignals(tlsEnabled bool, certFile, keyFile string) error {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	return server.runContext(ctx, tlsEnabled, certFile, keyFile)
+	return server.runWithSignalsAt("", tlsEnabled, certFile, keyFile)
 }
 
-func (server *Server) runContext(ctx context.Context, tlsEnabled bool, certFile, keyFile string) error {
+func (server *Server) runWithSignalsAt(address string, tlsEnabled bool, certFile, keyFile string) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return server.runContext(ctx, address, tlsEnabled, certFile, keyFile)
+}
+
+func (server *Server) runContext(ctx context.Context, address string, tlsEnabled bool, certFile, keyFile string) error {
 	if err := server.Err(); err != nil {
 		return err
 	}
-	if err := server.beginRun(); err != nil {
+	if err := server.beginRun(address); err != nil {
 		return err
 	}
 	defer server.endRun()

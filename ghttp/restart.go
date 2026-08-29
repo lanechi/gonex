@@ -8,6 +8,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -24,25 +25,68 @@ type RestartManager interface {
 	Restart(ctx context.Context) error
 }
 
-type serverRestartManager struct{ server *Server }
+type restartAttempt struct {
+	done chan struct{}
+	err  error
+}
+
+type serverRestartManager struct {
+	server  *Server
+	mu      sync.Mutex
+	running bool
+	attempt *restartAttempt
+}
 
 func (manager *serverRestartManager) Restart(ctx context.Context) error {
 	if manager == nil || manager.server == nil {
 		return ErrGracefulRestartUnsupported
 	}
-	switch runtime.GOOS {
-	case "aix", "darwin", "dragonfly", "freebsd", "linux", "netbsd", "openbsd", "solaris":
-	default:
-		return ErrGracefulRestartUnsupported
-	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	manager.mu.Lock()
+	if manager.running {
+		attempt := manager.attempt
+		manager.mu.Unlock()
+		return waitRestartAttempt(ctx, attempt)
+	}
+	attempt := &restartAttempt{done: make(chan struct{})}
+	manager.running = true
+	manager.attempt = attempt
+	manager.mu.Unlock()
+
+	err := manager.restart(ctx)
+	manager.mu.Lock()
+	manager.running = false
+	attempt.err = err
+	close(attempt.done)
+	manager.mu.Unlock()
+	return err
+}
+
+func waitRestartAttempt(ctx context.Context, attempt *restartAttempt) error {
+	if attempt == nil {
+		return nil
+	}
+	select {
+	case <-attempt.done:
+		return attempt.err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (manager *serverRestartManager) restart(ctx context.Context) error {
 	manager.server.listenerMu.RLock()
 	listener := manager.server.listener
 	manager.server.listenerMu.RUnlock()
 	if listener == nil {
 		return ErrServerNotRunning
+	}
+	switch runtime.GOOS {
+	case "aix", "darwin", "dragonfly", "freebsd", "linux", "netbsd", "openbsd", "solaris":
+	default:
+		return ErrGracefulRestartUnsupported
 	}
 	fileProvider, ok := listener.(interface{ File() (*os.File, error) })
 	if !ok {
@@ -93,6 +137,7 @@ func (manager *serverRestartManager) Restart(ctx context.Context) error {
 	case err := <-ready:
 		if err != nil {
 			_ = process.Kill()
+			_, _ = process.Wait()
 			return fmt.Errorf("replacement process did not become ready: %w", err)
 		}
 	case <-ctx.Done():
@@ -129,7 +174,7 @@ func restartEnvironment() []string {
 // WithRestartManager supplies a platform-specific restart implementation.
 func WithRestartManager(manager RestartManager) Option {
 	return func(server *Server) {
-		if manager != nil {
+		if !isNilInterface(manager) {
 			server.restartManager = manager
 		}
 	}
@@ -137,7 +182,7 @@ func WithRestartManager(manager RestartManager) Option {
 
 // Restart delegates to the configured restart manager.
 func (server *Server) Restart(ctx context.Context) error {
-	if server.restartManager == nil {
+	if isNilInterface(server.restartManager) {
 		return ErrGracefulRestartUnsupported
 	}
 	return server.restartManager.Restart(ctx)

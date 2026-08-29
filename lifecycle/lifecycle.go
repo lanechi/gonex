@@ -16,27 +16,28 @@ type phaseAttempt struct {
 
 // Lifecycle manages ordered hooks and tracked background tasks.
 type Lifecycle struct {
-	mu              sync.Mutex
-	onStart         []Hook
-	onStarted       []Hook
-	onShutdown      []Hook
-	onStop          []Hook
-	startHooksRun   bool
-	startRunning    bool
-	startAttempt    *phaseAttempt
-	started         bool
-	starting        bool
-	startedAttempt  *phaseAttempt
-	shutdown        bool
-	shutdownOnce    bool
-	shutdownRunning bool
-	shutdownAttempt *phaseAttempt
-	stopRunning     bool
-	stopAttempt     *phaseAttempt
-	taskCount       int
-	taskDone        chan struct{}
-	taskContext     context.Context
-	cancelTasks     context.CancelFunc
+	mu               sync.Mutex
+	onStart          []Hook
+	onStarted        []Hook
+	onShutdown       []Hook
+	onStop           []Hook
+	startHooksRun    bool
+	startRunning     bool
+	startAttempt     *phaseAttempt
+	started          bool
+	starting         bool
+	startedAttempt   *phaseAttempt
+	shutdown         bool
+	shutdownOnce     bool
+	shutdownHooksRun bool
+	shutdownRunning  bool
+	shutdownAttempt  *phaseAttempt
+	stopRunning      bool
+	stopAttempt      *phaseAttempt
+	taskCount        int
+	taskDone         chan struct{}
+	taskContext      context.Context
+	cancelTasks      context.CancelFunc
 }
 
 // New creates an independent lifecycle manager.
@@ -191,8 +192,10 @@ func (lifecycle *Lifecycle) Start(ctx context.Context) error {
 	return lifecycle.MarkStarted(ctx)
 }
 
-// BeginShutdown cancels tracked tasks and runs shutdown hooks once. Concurrent
-// callers wait for the same shutdown attempt and receive the same result.
+// BeginShutdown blocks new startup work, waits for any active startup phase to
+// finish, then cancels tracked tasks and runs shutdown hooks once. Startup's
+// own result is intentionally not propagated: shutdown intent may cause that
+// startup attempt to return context.Canceled, while shutdown itself succeeded.
 func (lifecycle *Lifecycle) BeginShutdown(ctx context.Context) error {
 	if lifecycle == nil {
 		return nil
@@ -206,23 +209,31 @@ func (lifecycle *Lifecycle) BeginShutdown(ctx context.Context) error {
 		lifecycle.mu.Unlock()
 		return waitAttempt(ctx, attempt)
 	}
-	if lifecycle.shutdownOnce {
+	if lifecycle.shutdownHooksRun {
 		attempt := lifecycle.shutdownAttempt
 		lifecycle.mu.Unlock()
-		if attempt == nil {
-			return nil
-		}
 		return waitAttempt(ctx, attempt)
 	}
 	attempt := &phaseAttempt{done: make(chan struct{})}
 	lifecycle.shutdownOnce = true
 	lifecycle.shutdownRunning = true
 	lifecycle.shutdownAttempt = attempt
+	startAttempt := lifecycle.startAttempt
+	startedAttempt := lifecycle.startedAttempt
 	hooks := append([]Hook(nil), lifecycle.onShutdown...)
 	if lifecycle.cancelTasks != nil {
 		lifecycle.cancelTasks()
 	}
 	lifecycle.mu.Unlock()
+
+	if err := waitAttemptCompletion(ctx, startAttempt); err != nil {
+		lifecycle.finishShutdownAttempt(attempt, err, false)
+		return err
+	}
+	if err := waitAttemptCompletion(ctx, startedAttempt); err != nil {
+		lifecycle.finishShutdownAttempt(attempt, err, false)
+		return err
+	}
 
 	var firstError error
 	for _, hook := range hooks {
@@ -230,13 +241,19 @@ func (lifecycle *Lifecycle) BeginShutdown(ctx context.Context) error {
 			firstError = err
 		}
 	}
+	lifecycle.finishShutdownAttempt(attempt, firstError, true)
+	return firstError
+}
 
+func (lifecycle *Lifecycle) finishShutdownAttempt(attempt *phaseAttempt, err error, hooksRun bool) {
 	lifecycle.mu.Lock()
 	lifecycle.shutdownRunning = false
-	attempt.err = firstError
+	if hooksRun {
+		lifecycle.shutdownHooksRun = true
+	}
+	attempt.err = err
 	close(attempt.done)
 	lifecycle.mu.Unlock()
-	return firstError
 }
 
 // Stop runs final lifecycle hooks once, after the shutdown phase has completed.
@@ -254,6 +271,10 @@ func (lifecycle *Lifecycle) Stop(ctx context.Context) error {
 	}
 
 	lifecycle.mu.Lock()
+	if !lifecycle.shutdownHooksRun {
+		lifecycle.mu.Unlock()
+		return shutdownErr
+	}
 	if lifecycle.stopRunning {
 		attempt := lifecycle.stopAttempt
 		lifecycle.mu.Unlock()
@@ -366,6 +387,21 @@ func waitAttempt(ctx context.Context, attempt *phaseAttempt) error {
 	select {
 	case <-attempt.done:
 		return attempt.err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func waitAttemptCompletion(ctx context.Context, attempt *phaseAttempt) error {
+	if attempt == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-attempt.done:
+		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}

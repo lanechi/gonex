@@ -39,6 +39,17 @@ type PreparedOutput struct {
 	Delete  bool
 }
 
+// sameFormattedSource compares Go source after formatting the existing file.
+// This makes dry-run and ownership decisions independent of checkout line
+// endings (notably CRLF on Windows) and harmless formatting differences.
+func sameFormattedSource(existing, formatted []byte) bool {
+	if bytes.Equal(existing, formatted) {
+		return true
+	}
+	canonical, err := format.Source(existing)
+	return err == nil && bytes.Equal(canonical, formatted)
+}
+
 // PrepareOutputs formats every candidate and computes its complete result
 // before a transaction is opened. This is the common Render→Format boundary
 // for controller and service generation.
@@ -73,13 +84,13 @@ func PrepareOutputs(project Project, outputs []Output, dryRun bool) (Result, []P
 		// Forced/replacing output is still a no-op when the complete formatted
 		// artifact already matches. This keeps dry-run plans deterministic and
 		// avoids reporting needless rewrites for canonical generated projects.
-		if readErr == nil && bytes.Equal(existing, formatted) {
+		if readErr == nil && sameFormattedSource(existing, formatted) {
 			result.Add("SKIP", relative, "unchanged")
 			continue
 		}
 		switch output.Mode {
 		case OutputPlanned:
-			if readErr == nil && bytes.Equal(existing, formatted) {
+			if readErr == nil && sameFormattedSource(existing, formatted) {
 				result.Add("SKIP", relative, "unchanged")
 				continue
 			}
@@ -100,7 +111,7 @@ func PrepareOutputs(project Project, outputs []Output, dryRun bool) (Result, []P
 			prepared = append(prepared, PreparedOutput{Path: relative, Content: formatted})
 			continue
 		case OutputUpdated:
-			if readErr == nil && bytes.Equal(existing, formatted) {
+			if readErr == nil && sameFormattedSource(existing, formatted) {
 				result.Add("SKIP", relative, "unchanged")
 				continue
 			}
@@ -164,7 +175,7 @@ func writePlanned(project Project, result *Result, path string, source []byte, d
 	}
 	existing, readErr := os.ReadFile(path)
 	switch {
-	case readErr == nil && bytes.Equal(existing, content):
+	case readErr == nil && sameFormattedSource(existing, content):
 		result.Add("SKIP", relative, "unchanged")
 		return nil
 	case readErr == nil && !generatedFile(existing):
@@ -238,7 +249,7 @@ func writeForced(project Project, result *Result, path string, source []byte, dr
 	if readErr != nil && !os.IsNotExist(readErr) {
 		return fmt.Errorf("read %s: %w", relative, readErr)
 	}
-	if readErr == nil && bytes.Equal(existing, content) {
+	if readErr == nil && sameFormattedSource(existing, content) {
 		result.Add("SKIP", relative, "unchanged")
 		return nil
 	}
@@ -375,7 +386,7 @@ func writeUpdated(project Project, result *Result, path string, source []byte, d
 	}
 	existing, readErr := os.ReadFile(path)
 	switch {
-	case readErr == nil && bytes.Equal(existing, content):
+	case readErr == nil && sameFormattedSource(existing, content):
 		result.Add("SKIP", relative, "unchanged")
 		return nil
 	case readErr == nil && dryRun:

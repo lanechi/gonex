@@ -16,6 +16,7 @@ import (
 
 // Manager owns parsed html/template files and application functions.
 type Manager struct {
+	updateMu  sync.Mutex
 	mu        sync.RWMutex
 	root      string
 	functions template.FuncMap
@@ -28,20 +29,45 @@ type Manager struct {
 // New creates a template manager.
 func New() *Manager { return &Manager{functions: make(template.FuncMap)} }
 
+// SetRoot validates and prepares the complete replacement before disturbing the
+// currently serving template snapshot. A failed root change leaves the old
+// root, parsed templates, and watcher usable.
 func (manager *Manager) SetRoot(root string) error {
 	root = strings.TrimSpace(root)
-	if root != "" {
-		root = filepath.Clean(root)
+	if root == "" {
+		return fmt.Errorf("template root is not configured")
 	}
-	manager.stopWatcher()
-	manager.mu.Lock()
-	manager.root = root
-	manager.templates = nil
-	manager.mu.Unlock()
-	if err := manager.Reload(); err != nil {
+	root = filepath.Clean(root)
+
+	manager.updateMu.Lock()
+	defer manager.updateMu.Unlock()
+	manager.mu.RLock()
+	functions := cloneFuncMap(manager.functions)
+	manager.mu.RUnlock()
+
+	parsed, err := parseRoot(root, functions)
+	if err != nil {
 		return err
 	}
-	return manager.startWatcher()
+	watcher, err := prepareWatcher(root)
+	if err != nil {
+		return err
+	}
+	if err := manager.stopWatcherUnlocked(); err != nil {
+		_ = watcher.Close()
+		return err
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	manager.mu.Lock()
+	manager.root = root
+	manager.templates = parsed
+	manager.watcher = watcher
+	manager.watchStop = stop
+	manager.watchDone = done
+	manager.mu.Unlock()
+	go manager.watchLoop(watcher, stop, done)
+	return nil
 }
 
 func (manager *Manager) AddFunc(name string, function any) error {
@@ -59,14 +85,29 @@ func (manager *Manager) AddFunc(name string, function any) error {
 	if err := validateFunc(name, function); err != nil {
 		return err
 	}
-	manager.mu.Lock()
-	manager.functions[name] = function
-	rootConfigured := manager.root != ""
-	manager.mu.Unlock()
-	if !rootConfigured {
+
+	manager.updateMu.Lock()
+	defer manager.updateMu.Unlock()
+	manager.mu.RLock()
+	root := manager.root
+	functions := cloneFuncMap(manager.functions)
+	manager.mu.RUnlock()
+	functions[name] = function
+	if root == "" {
+		manager.mu.Lock()
+		manager.functions = functions
+		manager.mu.Unlock()
 		return nil
 	}
-	return manager.Reload()
+	parsed, err := parseRoot(root, functions)
+	if err != nil {
+		return err
+	}
+	manager.mu.Lock()
+	manager.functions = functions
+	manager.templates = parsed
+	manager.mu.Unlock()
+	return nil
 }
 
 func validateFunc(name string, function any) (err error) {
@@ -89,17 +130,36 @@ func (manager *Manager) Invalidate() {
 
 // Close stops the directory watcher. It is safe to call more than once.
 func (manager *Manager) Close() error {
-	return manager.stopWatcher()
+	manager.updateMu.Lock()
+	defer manager.updateMu.Unlock()
+	return manager.stopWatcherUnlocked()
 }
 
+// Reload parses a replacement snapshot first and only publishes it after the
+// entire tree succeeds, so parse/read failures preserve the previous cache.
 func (manager *Manager) Reload() error {
+	manager.updateMu.Lock()
+	defer manager.updateMu.Unlock()
+	manager.mu.RLock()
+	root := manager.root
+	functions := cloneFuncMap(manager.functions)
+	manager.mu.RUnlock()
+	parsed, err := parseRoot(root, functions)
+	if err != nil {
+		return err
+	}
 	manager.mu.Lock()
-	defer manager.mu.Unlock()
-	if manager.root == "" {
-		return fmt.Errorf("template root is not configured")
+	manager.templates = parsed
+	manager.mu.Unlock()
+	return nil
+}
+
+func parseRoot(root string, functions template.FuncMap) (*template.Template, error) {
+	if root == "" {
+		return nil, fmt.Errorf("template root is not configured")
 	}
 	files := make([]string, 0)
-	if err := filepath.WalkDir(manager.root, func(path string, entry os.DirEntry, walkErr error) error {
+	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -109,28 +169,35 @@ func (manager *Manager) Reload() error {
 		files = append(files, path)
 		return nil
 	}); err != nil {
-		return err
+		return nil, err
 	}
 	if len(files) == 0 {
-		return fmt.Errorf("no HTML templates found under %s", manager.root)
+		return nil, fmt.Errorf("no HTML templates found under %s", root)
 	}
-	parsed := template.New("root").Funcs(manager.functions)
+	parsed := template.New("root").Funcs(functions)
 	for _, path := range files {
 		contents, err := os.ReadFile(path)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		name, err := filepath.Rel(manager.root, path)
+		name, err := filepath.Rel(root, path)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		name = filepath.ToSlash(name)
 		if _, err := parsed.New(name).Parse(string(contents)); err != nil {
-			return fmt.Errorf("parse template %s: %w", name, err)
+			return nil, fmt.Errorf("parse template %s: %w", name, err)
 		}
 	}
-	manager.templates = parsed
-	return nil
+	return parsed, nil
+}
+
+func cloneFuncMap(source template.FuncMap) template.FuncMap {
+	clone := make(template.FuncMap, len(source))
+	for name, function := range source {
+		clone[name] = function
+	}
+	return clone
 }
 
 func (manager *Manager) Execute(writer io.Writer, name string, data any) error {
@@ -151,17 +218,10 @@ func (manager *Manager) Execute(writer io.Writer, name string, data any) error {
 	return templates.ExecuteTemplate(writer, name, data)
 }
 
-func (manager *Manager) startWatcher() error {
-	manager.mu.RLock()
-	root := manager.root
-	manager.mu.RUnlock()
-	if root == "" {
-		return nil
-	}
-
+func prepareWatcher(root string) (*fsnotify.Watcher, error) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		return fmt.Errorf("create template watcher: %w", err)
+		return nil, fmt.Errorf("create template watcher: %w", err)
 	}
 	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -173,26 +233,12 @@ func (manager *Manager) startWatcher() error {
 		return nil
 	}); err != nil {
 		_ = watcher.Close()
-		return fmt.Errorf("watch template root: %w", err)
+		return nil, fmt.Errorf("watch template root: %w", err)
 	}
-
-	manager.mu.Lock()
-	if manager.root != root || manager.watcher != nil {
-		manager.mu.Unlock()
-		_ = watcher.Close()
-		return nil
-	}
-	stop := make(chan struct{})
-	done := make(chan struct{})
-	manager.watcher = watcher
-	manager.watchStop = stop
-	manager.watchDone = done
-	manager.mu.Unlock()
-	go manager.watchLoop(watcher, stop, done)
-	return nil
+	return watcher, nil
 }
 
-func (manager *Manager) stopWatcher() error {
+func (manager *Manager) stopWatcherUnlocked() error {
 	manager.mu.Lock()
 	watcher := manager.watcher
 	stop := manager.watchStop

@@ -23,9 +23,10 @@ type SessionManager struct {
 
 // NewSessionManager creates an HTTP session manager over storage. Storage I/O
 // receives each request context; the application retains ownership of storage
-// and any external client it uses.
+// and any external client it uses. Nil and typed-nil storage both select the
+// process-local memory backend.
 func NewSessionManager(storage session.Storage, cookieName string, ttl time.Duration) *SessionManager {
-	if storage == nil {
+	if isNilInterface(storage) {
 		storage = session.NewMemoryStorage()
 	}
 	if cookieName == "" {

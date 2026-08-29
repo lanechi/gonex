@@ -2,6 +2,7 @@
 package fs
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -97,7 +98,9 @@ func (transaction *Transaction) Write(relative string, content []byte, permissio
 
 // Commit publishes all staged files and closes the transaction. Every target
 // path is revalidated immediately before mutation so a parent replaced with a
-// symlink after Write/Delete validation cannot redirect the commit.
+// symlink after Write/Delete validation cannot redirect the commit. If commit
+// fails, rollback failures are joined with the original error instead of being
+// hidden from the caller.
 func (transaction *Transaction) Commit() error {
 	if transaction == nil || !transaction.open {
 		return fmt.Errorf("file transaction is closed")
@@ -121,72 +124,96 @@ func (transaction *Transaction) Commit() error {
 	}
 	installed := make([]string, 0, len(files))
 	backedUp := make([]string, 0, len(files)+len(transaction.deletes))
-	rollback := func() {
+	rollback := func() error {
+		var rollbackErrors []error
 		for index := len(installed) - 1; index >= 0; index-- {
-			_ = os.Remove(installed[index])
+			relative, err := filepath.Rel(transaction.root, installed[index])
+			if err != nil {
+				rollbackErrors = append(rollbackErrors, fmt.Errorf("resolve installed rollback path: %w", err))
+				continue
+			}
+			destination, err := safeProjectPath(transaction.root, relative)
+			if err != nil {
+				rollbackErrors = append(rollbackErrors, fmt.Errorf("revalidate installed rollback path %s: %w", relative, err))
+				continue
+			}
+			if err := os.Remove(destination); err != nil && !os.IsNotExist(err) {
+				rollbackErrors = append(rollbackErrors, fmt.Errorf("remove installed file %s: %w", relative, err))
+			}
 		}
 		for index := len(backedUp) - 1; index >= 0; index-- {
-			path := backedUp[index]
-			relative, _ := filepath.Rel(transaction.backup, path)
-			_ = os.Rename(path, filepath.Join(transaction.root, relative))
+			backupPath := backedUp[index]
+			relative, err := filepath.Rel(transaction.backup, backupPath)
+			if err != nil {
+				rollbackErrors = append(rollbackErrors, fmt.Errorf("resolve backup rollback path: %w", err))
+				continue
+			}
+			destination, err := safeProjectPath(transaction.root, relative)
+			if err != nil {
+				rollbackErrors = append(rollbackErrors, fmt.Errorf("revalidate backup rollback path %s: %w", relative, err))
+				continue
+			}
+			if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+				rollbackErrors = append(rollbackErrors, fmt.Errorf("create rollback parent for %s: %w", relative, err))
+				continue
+			}
+			if err := os.Rename(backupPath, destination); err != nil {
+				rollbackErrors = append(rollbackErrors, fmt.Errorf("restore %s: %w", relative, err))
+			}
 		}
+		return errors.Join(rollbackErrors...)
 	}
+	fail := func(cause error) error { return errors.Join(cause, rollback()) }
+
 	for _, path := range files {
 		relative, err := filepath.Rel(transaction.stage, path)
 		if err != nil {
-			rollback()
-			return fmt.Errorf("resolve staged file: %w", err)
+			return fail(fmt.Errorf("resolve staged file: %w", err))
 		}
 		destination, err := safeProjectPath(transaction.root, relative)
 		if err != nil {
-			rollback()
-			return fmt.Errorf("revalidate destination %s: %w", relative, err)
+			return fail(fmt.Errorf("revalidate destination %s: %w", relative, err))
 		}
 		if _, statErr := os.Stat(destination); statErr == nil {
 			backup := filepath.Join(transaction.backup, relative)
 			if err := os.MkdirAll(filepath.Dir(backup), 0o755); err != nil {
-				rollback()
-				return fmt.Errorf("create transaction backup directory: %w", err)
+				return fail(fmt.Errorf("create transaction backup directory: %w", err))
 			}
 			if err := os.Rename(destination, backup); err != nil {
-				rollback()
-				return fmt.Errorf("backup %s: %w", relative, err)
+				return fail(fmt.Errorf("backup %s: %w", relative, err))
 			}
 			backedUp = append(backedUp, backup)
 		} else if !os.IsNotExist(statErr) {
-			rollback()
-			return fmt.Errorf("inspect destination %s: %w", relative, statErr)
+			return fail(fmt.Errorf("inspect destination %s: %w", relative, statErr))
 		}
 		if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
-			rollback()
-			return fmt.Errorf("create destination directory: %w", err)
+			return fail(fmt.Errorf("create destination directory: %w", err))
+		}
+		destination, err = safeProjectPath(transaction.root, relative)
+		if err != nil {
+			return fail(fmt.Errorf("revalidate destination %s after parent creation: %w", relative, err))
 		}
 		if err := os.Rename(path, destination); err != nil {
-			rollback()
-			return fmt.Errorf("install %s: %w", relative, err)
+			return fail(fmt.Errorf("install %s: %w", relative, err))
 		}
 		installed = append(installed, destination)
 	}
 	for _, relative := range transaction.deletes {
 		destination, err := safeProjectPath(transaction.root, relative)
 		if err != nil {
-			rollback()
-			return fmt.Errorf("revalidate delete destination %s: %w", relative, err)
+			return fail(fmt.Errorf("revalidate delete destination %s: %w", relative, err))
 		}
 		if _, statErr := os.Stat(destination); os.IsNotExist(statErr) {
 			continue
 		} else if statErr != nil {
-			rollback()
-			return fmt.Errorf("inspect delete destination %s: %w", relative, statErr)
+			return fail(fmt.Errorf("inspect delete destination %s: %w", relative, statErr))
 		}
 		backup := filepath.Join(transaction.backup, relative)
 		if err := os.MkdirAll(filepath.Dir(backup), 0o755); err != nil {
-			rollback()
-			return fmt.Errorf("create transaction delete backup directory: %w", err)
+			return fail(fmt.Errorf("create transaction delete backup directory: %w", err))
 		}
 		if err := os.Rename(destination, backup); err != nil {
-			rollback()
-			return fmt.Errorf("backup deleted file %s: %w", relative, err)
+			return fail(fmt.Errorf("backup deleted file %s: %w", relative, err))
 		}
 		backedUp = append(backedUp, backup)
 	}
@@ -199,17 +226,22 @@ func (transaction *Transaction) Rollback() error {
 	if transaction == nil || !transaction.open {
 		return nil
 	}
-	transaction.close()
-	return nil
+	return transaction.close()
 }
 
-func (transaction *Transaction) close() {
+func (transaction *Transaction) close() error {
 	if !transaction.open {
-		return
+		return nil
 	}
 	transaction.open = false
-	_ = os.RemoveAll(transaction.stage)
-	if transaction.backup != "" {
-		_ = os.RemoveAll(transaction.backup)
+	var cleanupErrors []error
+	if err := os.RemoveAll(transaction.stage); err != nil {
+		cleanupErrors = append(cleanupErrors, fmt.Errorf("remove transaction staging: %w", err))
 	}
+	if transaction.backup != "" {
+		if err := os.RemoveAll(transaction.backup); err != nil {
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("remove transaction backup: %w", err))
+		}
+	}
+	return errors.Join(cleanupErrors...)
 }
