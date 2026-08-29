@@ -77,16 +77,16 @@ func waitRestartAttempt(ctx context.Context, attempt *restartAttempt) error {
 }
 
 func (manager *serverRestartManager) restart(ctx context.Context) error {
-	switch runtime.GOOS {
-	case "aix", "darwin", "dragonfly", "freebsd", "linux", "netbsd", "openbsd", "solaris":
-	default:
-		return ErrGracefulRestartUnsupported
-	}
 	manager.server.listenerMu.RLock()
 	listener := manager.server.listener
 	manager.server.listenerMu.RUnlock()
 	if listener == nil {
 		return ErrServerNotRunning
+	}
+	switch runtime.GOOS {
+	case "aix", "darwin", "dragonfly", "freebsd", "linux", "netbsd", "openbsd", "solaris":
+	default:
+		return ErrGracefulRestartUnsupported
 	}
 	fileProvider, ok := listener.(interface{ File() (*os.File, error) })
 	if !ok {
