@@ -52,7 +52,10 @@ func (group *RouterGroup) Bind(controllers ...any) error {
 			return err
 		}
 		for index := range controllerRoutes {
-			controllerRoutes[index].Path = joinRoutePaths(group.prefix, controllerRoutes[index].Path)
+			route := &controllerRoutes[index]
+			metadata := route.Metadata
+			joinedPath := joinRoutePaths(group.prefix, metadata.Path)
+			route.Metadata.Path = joinedPath
 		}
 		routes = append(routes, controllerRoutes...)
 	}

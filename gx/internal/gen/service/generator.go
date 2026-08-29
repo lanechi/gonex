@@ -1,6 +1,7 @@
-package gen
+package service
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/format"
@@ -11,23 +12,31 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/lanechi/gonex/gx/internal/gen/shared"
 )
 
-func GenerateServices(project Project, options ServiceOptions) (Result, error) {
-	if strings.TrimSpace(options.Name) != "" {
-		return generateStandardService(project, options)
-	}
-	var result Result
+// Generate creates Service interfaces from developer-owned Logic methods.
+func Generate(project Project, options ServiceOptions) (Result, error) {
 	if options.Source == "" {
 		options.Source = defaultLogicSource
 	}
 	if options.Destination == "" {
 		options.Destination = defaultServiceDest
 	}
+	return (Pipeline{}).Run(Discovery{Project: project, Options: options})
+}
+
+func render(discovery Discovery) (Rendered, error) {
+	if strings.TrimSpace(discovery.Options.Name) != "" {
+		return renderStandardService(discovery)
+	}
+	project, options := discovery.Project, discovery.Options
 	modules, err := scanLogic(project, options.Source, options.Module)
 	if err != nil {
-		return result, err
+		return Rendered{}, err
 	}
+	rendered := Rendered{Discovery: discovery}
 	logicSources := make(map[string]struct{})
 	for _, methods := range modules {
 		for _, method := range methods {
@@ -35,13 +44,21 @@ func GenerateServices(project Project, options ServiceOptions) (Result, error) {
 				continue
 			}
 			logicSources[method.Source] = struct{}{}
-			if err := transferLegacyDeveloperOwnership(project, &result, project.Resolve(method.Source), "Logic implementation", options.DryRun); err != nil {
-				return result, err
+			output, err := legacyLogicOwnershipOutput(project, method.Source)
+			if err != nil {
+				return Rendered{}, err
+			}
+			if output != nil {
+				rendered.Outputs = append(rendered.Outputs, *output)
 			}
 		}
 	}
-	if err := ensureDemoModel(project, &result, options.DryRun); err != nil {
-		return result, err
+	demoModel, err := demoModelOutput(project)
+	if err != nil {
+		return Rendered{}, err
+	}
+	if demoModel != nil {
+		rendered.Outputs = append(rendered.Outputs, *demoModel)
 	}
 	moduleNames := make([]string, 0, len(modules))
 	for module := range modules {
@@ -52,17 +69,29 @@ func GenerateServices(project Project, options ServiceOptions) (Result, error) {
 		methods := modules[module]
 		source, err := renderService(project, options.Destination, module, methods)
 		if err != nil {
-			return result, err
+			return Rendered{}, err
 		}
 		path := filepath.Join(project.Resolve(options.Destination), module+".go")
-		if err := writeReplacing(project, &result, path, source, options.DryRun); err != nil {
-			return result, err
-		}
+		rendered.Outputs = append(rendered.Outputs, shared.Output{Path: path, Content: source, Mode: shared.OutputReplacing})
 	}
-	if err := syncLogicAggregator(project, options.Source, modules, &result, options.DryRun); err != nil {
-		return result, err
+	aggregator, err := logicAggregatorOutput(project, options.Source, modules)
+	if err != nil {
+		return Rendered{}, err
 	}
-	return result, nil
+	rendered.Outputs = append(rendered.Outputs, aggregator)
+	return rendered, nil
+}
+
+func legacyLogicOwnershipOutput(project Project, relative string) (*shared.Output, error) {
+	path := project.Resolve(relative)
+	existing, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read developer-owned Logic implementation %s: %w", path, err)
+	}
+	if !bytes.HasPrefix(existing, []byte(generatedHeader)) {
+		return nil, nil
+	}
+	return &shared.Output{Path: path, Mode: shared.OutputDeveloperOwned, Label: "Logic implementation"}, nil
 }
 
 func scanLogic(project Project, sourceDir, requestedModule string) (map[string][]LogicMethod, error) {
@@ -119,13 +148,13 @@ func scanLogic(project Project, sourceDir, requestedModule string) (map[string][
 	return modules, nil
 }
 
-// syncLogicAggregator keeps the package-level logic import side effect in
+// logicAggregatorOutput keeps the package-level logic import side effect in
 // sync with the logic modules used to generate services. Importing each
 // implementation package makes its init function register the service.
-func syncLogicAggregator(project Project, sourceDir string, modules map[string][]LogicMethod, result *Result, dryRun bool) error {
+func logicAggregatorOutput(project Project, sourceDir string, modules map[string][]LogicMethod) (shared.Output, error) {
 	importPaths, err := logicImportPaths(project, sourceDir, modules)
 	if err != nil {
-		return err
+		return shared.Output{}, err
 	}
 	path := filepath.Join(project.Resolve(sourceDir), logicAggregatorName)
 	existing, readErr := os.ReadFile(path)
@@ -134,15 +163,15 @@ func syncLogicAggregator(project Project, sourceDir string, modules map[string][
 	case readErr == nil:
 		source, err = addLogicImports(project, sourceDir, existing, importPaths)
 		if err != nil {
-			return fmt.Errorf("update logic aggregator %s: %w", path, err)
+			return shared.Output{}, fmt.Errorf("update logic aggregator %s: %w", path, err)
 		}
 	case os.IsNotExist(readErr):
 		source = renderLogicAggregator(importPaths)
 	default:
-		return fmt.Errorf("read logic aggregator %s: %w", path, readErr)
+		return shared.Output{}, fmt.Errorf("read logic aggregator %s: %w", path, readErr)
 	}
 	source = withGeneratedHeader(source)
-	return writeUpdated(project, result, path, source, dryRun)
+	return shared.Output{Path: path, Content: source, Mode: shared.OutputUpdated}, nil
 }
 
 func logicImportPaths(project Project, sourceDir string, modules map[string][]LogicMethod) ([]string, error) {
@@ -396,23 +425,22 @@ func renderService(project Project, destination, module string, methods []LogicM
 	return []byte(builder.String()), nil
 }
 
-func ensureDemoModel(project Project, result *Result, dryRun bool) error {
+func demoModelOutput(project Project) (*shared.Output, error) {
 	path := project.Resolve(defaultDemoModelPath)
 	relative, err := filepath.Rel(project.Root, path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	info, readErr := os.Stat(path)
 	switch {
 	case readErr == nil && info.IsDir():
-		return fmt.Errorf("demo model path is a directory: %s", relative)
+		return nil, fmt.Errorf("demo model path is a directory: %s", relative)
 	case readErr == nil:
-		result.add("SKIP", relative, "demo model exists")
-		return nil
+		return nil, nil
 	case !os.IsNotExist(readErr):
-		return fmt.Errorf("stat demo model %s: %w", relative, readErr)
+		return nil, fmt.Errorf("stat demo model %s: %w", relative, readErr)
 	}
-	return writePlanned(project, result, path, renderDemoModel(), dryRun)
+	return &shared.Output{Path: path, Content: renderDemoModel(), Mode: shared.OutputPlanned}, nil
 }
 
 func renderDemoModel() []byte {

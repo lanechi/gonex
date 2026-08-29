@@ -20,7 +20,7 @@ func TestDefaultErrorHandlerShowsDetailsOnlyInDebugMode(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			writer := httptest.NewRecorder()
 			ginContext, _ := gin.CreateTestContext(writer)
-			server := &Server{mode: test.mode, modeSet: true}
+			server := &Server{mode: test.mode, options: serverOptions{Mode: Optional[string]{Value: test.mode, Set: true}}}
 			server.applyModeConfig()
 			defaultErrorHandler(&Context{gin: ginContext, server: server}, &Error{
 				Code:       40002,

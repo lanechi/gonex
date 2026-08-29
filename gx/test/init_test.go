@@ -52,6 +52,19 @@ func TestInitProjectDryRunAndValidation(t *testing.T) {
 	}
 }
 
+func TestInitProjectValidationFailureDoesNotPublishTarget(t *testing.T) {
+	server := archiveServer(t, []byte("not a gzip archive"))
+	defer server.Close()
+	target := filepath.Join(t.TempDir(), "app")
+	_, err := gen.InitProject(target, gen.InitOptions{ModulePath: "example.com/app", TemplateURL: server.URL})
+	if err == nil {
+		t.Fatal("invalid template archive was accepted")
+	}
+	if _, statErr := os.Stat(target); !os.IsNotExist(statErr) {
+		t.Fatalf("invalid template published target: %v", statErr)
+	}
+}
+
 func archiveServer(t *testing.T, body []byte) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {

@@ -22,8 +22,8 @@ func TestRouteHandlerLimitIsValidatedBeforeBatchRegistration(t *testing.T) {
 		t.Fatal(err)
 	}
 	routes := []router.Definition{
-		{Method: "GET", Path: "/handler-limit/a", Binder: &router.Binder{}},
-		{Method: "GET", Path: "/handler-limit/z", Binder: &router.Binder{}},
+		{Metadata: router.RouteMetadata{Method: "GET", Path: "/handler-limit/a"}, Runtime: router.RouteRuntime{Binder: &router.Binder{}}},
+		{Metadata: router.RouteMetadata{Method: "GET", Path: "/handler-limit/z"}, Runtime: router.RouteRuntime{Binder: &router.Binder{}}},
 	}
 	if err := server.registerRouteDefinitions(routes, nil); err == nil || !strings.Contains(err.Error(), "handlers") {
 		t.Fatalf("registration error = %v", err)

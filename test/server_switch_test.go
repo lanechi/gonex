@@ -71,7 +71,7 @@ func TestPreInitializationLoggerIsUsedByNewServer(t *testing.T) {
 	if err := g.SetLogger(logger); err != nil {
 		t.Fatal(err)
 	}
-	server := ghttp.NewServer(ghttp.WithOpenAPI(false))
+	server := ghttp.NewServer(ghttp.WithOpenAPI(ghttp.OpenAPIOptions{}))
 	logger.clear()
 	server.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/not-found", nil))
 	if !logger.contains("request completed") {
@@ -80,7 +80,7 @@ func TestPreInitializationLoggerIsUsedByNewServer(t *testing.T) {
 }
 
 func TestOpenAPIAndSwaggerShareOneSwitch(t *testing.T) {
-	server := ghttp.NewServer(ghttp.WithOpenAPI(false))
+	server := ghttp.NewServer(ghttp.WithOpenAPI(ghttp.OpenAPIOptions{}))
 	assertStatus := func(path string, expected int) {
 		recorder := httptest.NewRecorder()
 		server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))

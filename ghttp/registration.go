@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/lanechi/gonex/ghttp/internal/ginruntime"
 	"github.com/lanechi/gonex/router"
 )
 
@@ -36,13 +37,15 @@ func (server *Server) registerRouteDefinitions(routes []router.Definition, middl
 	defer ginRouteRegistrationMu.Unlock()
 	installGinLogging(server.logger)
 	for _, route := range routes {
-		route.Binder.MaxMultipartMemory = server.maxMultipartMemory
-		routeMiddleware := server.middlewareForRoute(route.Method, route.Path)
+		metadata := route.Metadata
+		runtime := route.Runtime
+		runtime.Binder.MaxMultipartMemory = server.maxMultipartMemory
+		routeMiddleware := server.middlewareForRoute(metadata.Method, metadata.Path)
 		handlers := make([]gin.HandlerFunc, 0, len(routeMiddleware)+len(middleware)+1)
 		handlers = append(handlers, ginMiddlewareHandlers(middleware)...)
 		handlers = append(handlers, ginMiddlewareHandlers(routeMiddleware)...)
 		handlers = append(handlers, server.handlerFor(route))
-		server.engine.Handle(route.Method, route.Path, handlers...)
+		server.engine.Handle(metadata.Method, metadata.Path, handlers...)
 	}
 	if err := server.registry.Register(routes...); err != nil {
 		return err
@@ -55,10 +58,11 @@ func (server *Server) registerRouteDefinitions(routes []router.Definition, middl
 func (server *Server) validateRouteHandlerCounts(routes []router.Definition, middleware []Middleware) error {
 	globalHandlers := len(server.engine.Handlers)
 	for _, route := range routes {
-		routeHandlers := len(server.middlewareForRoute(route.Method, route.Path))
+		metadata := route.Metadata
+		routeHandlers := len(server.middlewareForRoute(metadata.Method, metadata.Path))
 		total := globalHandlers + len(middleware) + routeHandlers + 1
 		if total >= ginAbortIndex {
-			return fmt.Errorf("route %s %s has %d handlers; Gin allows at most %d", route.Method, route.Path, total, ginAbortIndex-1)
+			return fmt.Errorf("route %s %s has %d handlers; Gin allows at most %d", metadata.Method, metadata.Path, total, ginAbortIndex-1)
 		}
 	}
 	return nil
@@ -82,20 +86,22 @@ func (server *Server) validateRouteRegistration(routes []router.Definition) erro
 	}
 	pending := make(map[string]string, len(routes))
 	for _, route := range routes {
-		if route.Binder == nil {
-			return fmt.Errorf("route %s %s has no request binder", route.Method, route.Path)
+		metadata := route.Metadata
+		runtime := route.Runtime
+		if runtime.Binder == nil {
+			return fmt.Errorf("route %s %s has no request binder", metadata.Method, metadata.Path)
 		}
-		if err := router.ValidatePathBindings(route.Path, route.Binder.Fields); err != nil {
-			return fmt.Errorf("route %s %s: %w", route.Method, route.Path, err)
+		if err := router.ValidatePathBindings(metadata.Path, runtime.Binder.Fields); err != nil {
+			return fmt.Errorf("route %s %s: %w", metadata.Method, metadata.Path, err)
 		}
-		key := strings.ToUpper(route.Method) + " " + routeShape(route.Path)
+		key := strings.ToUpper(metadata.Method) + " " + routeShape(metadata.Path)
 		if path, exists := existing[key]; exists {
-			return fmt.Errorf("route %s %s conflicts with registered route %s", route.Method, route.Path, path)
+			return fmt.Errorf("route %s %s conflicts with registered route %s", metadata.Method, metadata.Path, path)
 		}
 		if path, exists := pending[key]; exists {
-			return fmt.Errorf("route %s %s conflicts with controller route %s", route.Method, route.Path, path)
+			return fmt.Errorf("route %s %s conflicts with controller route %s", metadata.Method, metadata.Path, path)
 		}
-		pending[key] = route.Path
+		pending[key] = metadata.Path
 	}
 	if err := validateGinRouteTable(server.engine.Routes(), routes); err != nil {
 		return err
@@ -111,27 +117,23 @@ func (server *Server) validateRouteRegistration(routes []router.Definition) erro
 func validateGinRouteTable(existing []gin.RouteInfo, pending []router.Definition) (err error) {
 	ginRouteRegistrationMu.Lock()
 	defer ginRouteRegistrationMu.Unlock()
-	debugRouteFunc := gin.DebugPrintRouteFunc
-	debugPrintFunc := gin.DebugPrintFunc
-	gin.DebugPrintRouteFunc = func(string, string, string, int) {}
-	gin.DebugPrintFunc = func(string, ...any) {}
-	defer func() {
-		gin.DebugPrintRouteFunc = debugRouteFunc
-		gin.DebugPrintFunc = debugPrintFunc
-	}()
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			err = fmt.Errorf("route table conflict: %v", recovered)
 		}
 	}()
-	engine := gin.New()
-	placeholder := func(*gin.Context) {}
-	for _, route := range existing {
-		engine.Handle(route.Method, route.Path, placeholder)
-	}
-	for _, route := range pending {
-		engine.Handle(route.Method, route.Path, placeholder)
-	}
+	var engine *gin.Engine
+	ginruntime.WithQuietLogging(func() {
+		engine = gin.New()
+		placeholder := func(*gin.Context) {}
+		for _, route := range existing {
+			engine.Handle(route.Method, route.Path, placeholder)
+		}
+		for _, route := range pending {
+			metadata := route.Metadata
+			engine.Handle(metadata.Method, metadata.Path, placeholder)
+		}
+	})
 	return nil
 }
 

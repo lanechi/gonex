@@ -12,6 +12,7 @@
 - 验证可选 query 参数缺失时使用 `default`；
 - 验证命名 slice 值可以作为 Controller 响应；
 - 返回统一响应并自动生成 OpenAPI/Swagger。
+- 通过 `Server.Scheduler()` 注册由 Server 生命周期托管的后台任务。
 
 本目录是独立 module `github.com/lanechi/gonex/examples/basic`，通过 `go.mod` 中的本地
 `replace` 使用仓库内 gonex。
@@ -51,6 +52,8 @@ GET http://localhost:8000/docs/
 
 [`main.go`](main.go) 同时定义 `HelloReq`、`HelloRes`、Controller 和 Server 启动代码，适合用来
 验证公共 API 的最小改动；`main_test.go` 还覆盖了带 path 参数的 RouterGroup 前缀。
+其中 `registerBackgroundJobs` 注册每小时心跳，证明任务在 Server 启动后由 scheduler 运行、关闭时自动
+取消和等待，无需应用自行创建额外 goroutine。
 
 ## 验证
 

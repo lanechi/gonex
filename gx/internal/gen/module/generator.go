@@ -1,4 +1,4 @@
-package gen
+package module
 
 import (
 	"archive/tar"
@@ -39,57 +39,121 @@ type InitOptions struct {
 	DryRun      bool
 }
 
-// InitProject downloads the matching gonex demo, customizes its module and
-// name in staging, then atomically makes it the target directory.
-func InitProject(target string, options InitOptions) (result Result, err error) {
-	target, err = filepath.Abs(target)
+// Init downloads, validates, rewrites, and publishes the canonical demo project.
+func Init(target string, options InitOptions) (result Result, err error) {
+	return (Pipeline{}).Run(target, options)
+}
+
+func discover(target string, options InitOptions) (Discovery, error) {
+	target, err := filepath.Abs(target)
 	if err != nil {
-		return result, fmt.Errorf("resolve project path: %w", err)
+		return Discovery{}, fmt.Errorf("resolve project path: %w", err)
 	}
 	options.ModulePath = strings.TrimSpace(options.ModulePath)
 	if err := gomodule.CheckPath(options.ModulePath); err != nil {
-		return result, fmt.Errorf("invalid module path %q: %w", options.ModulePath, err)
+		return Discovery{}, fmt.Errorf("invalid module path %q: %w", options.ModulePath, err)
 	}
 	name := strings.TrimSpace(options.Name)
 	if name == "" {
 		name = filepath.Base(target)
 	}
 	if err := validateProjectName(name); err != nil {
-		return result, err
+		return Discovery{}, err
 	}
 	if err := validateInitTarget(target, options.Force); err != nil {
-		return result, err
+		return Discovery{}, err
 	}
 	url := strings.TrimSpace(options.TemplateURL)
 	if url == "" {
 		url = templateURL(buildVersion())
 	}
-	if options.DryRun {
-		result.add("CREATE", target, "dry-run; extract demo from "+url)
-		return result, nil
-	}
+	return Discovery{Target: target, Name: name, URL: url, Options: options}, nil
+}
 
-	staging, err := os.MkdirTemp(filepath.Dir(target), ".gx-init-*")
+func extract(discovery Discovery) (Extracted, error) {
+	extracted := Extracted{Discovery: discovery}
+	if discovery.Options.DryRun {
+		return extracted, nil
+	}
+	staging, err := os.MkdirTemp(filepath.Dir(discovery.Target), ".gx-init-*")
 	if err != nil {
-		return result, fmt.Errorf("create init staging: %w", err)
+		return Extracted{}, fmt.Errorf("create init staging: %w", err)
 	}
-	defer os.RemoveAll(staging)
-	if err := downloadAndExtract(context.Background(), url, staging); err != nil {
-		return result, err
+	extracted.Staging = staging
+	if err := downloadAndExtract(context.Background(), discovery.URL, staging); err != nil {
+		_ = os.RemoveAll(staging)
+		return Extracted{}, err
 	}
-	if err := validateDemo(staging); err != nil {
-		return result, err
+	return extracted, nil
+}
+
+func rewrite(extracted Extracted) (Rewritten, error) {
+	if extracted.Discovery.Options.DryRun {
+		return Rewritten{Extracted: extracted}, nil
 	}
-	if err := replaceDemoIdentifiers(staging, options.ModulePath, name); err != nil {
-		return result, err
+	if err := validateDemo(extracted.Staging); err != nil {
+		return Rewritten{}, err
 	}
-	if err := commitInitTarget(staging, target); err != nil {
-		return result, err
+	if err := replaceDemoIdentifiers(extracted.Staging, extracted.Discovery.Options.ModulePath, extracted.Discovery.Name); err != nil {
+		return Rewritten{}, err
 	}
-	for _, relative := range demoFiles(target) {
-		result.add("CREATE", relative, "demo template")
+	return Rewritten{Extracted: extracted}, nil
+}
+
+func validate(rewritten Rewritten) (Validated, error) {
+	if rewritten.Extracted.Discovery.Options.DryRun {
+		return Validated{Rewritten: rewritten}, nil
 	}
-	return result, nil
+	discovery := rewritten.Extracted.Discovery
+	if err := validateInitializedDemo(rewritten.Extracted.Staging, discovery.Options.ModulePath, discovery.Name); err != nil {
+		return Validated{}, err
+	}
+	return Validated{Rewritten: rewritten}, nil
+}
+
+func stage(validated Validated) Staged {
+	staged := Staged{Validated: validated}
+	discovery := validated.Rewritten.Extracted.Discovery
+	if discovery.Options.DryRun {
+		staged.Result.Add("CREATE", discovery.Target, "dry-run; extract demo from "+discovery.URL)
+	}
+	return staged
+}
+
+func commit(staged *Staged) error {
+	if staged == nil {
+		return fmt.Errorf("staged module product is required")
+	}
+	discovery := staged.Validated.Rewritten.Extracted.Discovery
+	if discovery.Options.DryRun {
+		return nil
+	}
+	if err := commitInitTarget(staged.Validated.Rewritten.Extracted.Staging, discovery.Target); err != nil {
+		return err
+	}
+	for _, relative := range demoFiles(discovery.Target) {
+		staged.Result.Add("CREATE", relative, "demo template")
+	}
+	return nil
+}
+
+func validateInitializedDemo(root, modulePath, name string) error {
+	source, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		return fmt.Errorf("read initialized go.mod: %w", err)
+	}
+	file, err := modfile.Parse("go.mod", source, nil)
+	if err != nil || file.Module == nil || file.Module.Mod.Path != modulePath {
+		return fmt.Errorf("initialized go.mod must declare module %s", modulePath)
+	}
+	rootSource, err := os.ReadFile(filepath.Join(root, "internal/cmd/root.go"))
+	if err != nil {
+		return fmt.Errorf("read initialized project name: %w", err)
+	}
+	if !bytes.Contains(rootSource, []byte(name)) {
+		return fmt.Errorf("initialized project name marker %q is missing", name)
+	}
+	return nil
 }
 
 func validateInitTarget(target string, force bool) error {

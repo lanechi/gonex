@@ -8,6 +8,7 @@ import (
 
 	"github.com/lanechi/gonex/ghttp"
 	"github.com/lanechi/gonex/openapi"
+	"github.com/lanechi/gonex/router"
 )
 
 func TestOpenAPIAndSwaggerEndpoints(t *testing.T) {
@@ -35,6 +36,19 @@ func TestOpenAPIAndSwaggerEndpoints(t *testing.T) {
 	}
 	if response.Header().Get("Content-Security-Policy") != "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'unsafe-inline'; connect-src 'self'" {
 		t.Fatalf("unexpected Swagger CSP: %q", response.Header().Get("Content-Security-Policy"))
+	}
+}
+
+func TestOpenAPIUsesMetadataBindingContract(t *testing.T) {
+	routes, err := router.ScanController(&uploadController{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes[0].Runtime.Binder = nil
+	operation := openapi.Generate("metadata", routes).Paths["/upload"]["post"]
+	content := operation.RequestBody["content"].(map[string]any)
+	if _, ok := content["multipart/form-data"]; !ok {
+		t.Fatalf("OpenAPI used runtime binder instead of metadata: %#v", content)
 	}
 }
 
@@ -83,7 +97,7 @@ func TestOpenAPIInfersMultipartForFileUpload(t *testing.T) {
 }
 
 func TestOpenAPIAndSwaggerEndpointsShareOneSwitch(t *testing.T) {
-	server := ghttp.NewServer(ghttp.WithOpenAPI(false))
+	server := ghttp.NewServer(ghttp.WithOpenAPI(ghttp.OpenAPIOptions{}))
 	for _, path := range []string{"/openapi.json", "/docs/"} {
 		response := httptest.NewRecorder()
 		server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))

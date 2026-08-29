@@ -1,4 +1,4 @@
-package gen
+package controller
 
 import (
 	"fmt"
@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/lanechi/gonex/gx/internal/gen/shared"
 )
 
 const standardVersion = "v1"
@@ -34,7 +36,6 @@ func standardCRUDAPIs(project Project, resource standardResource, sourceDir stri
 }
 
 func generateStandardControllers(project Project, options ControllerOptions) (Result, error) {
-	var result Result
 	explicitSource := options.Source != ""
 	if options.Source == "" {
 		options.Source = defaultAPISource
@@ -50,7 +51,7 @@ func generateStandardControllers(project Project, options ControllerOptions) (Re
 		resource, err = parseStandardResource(options.Name)
 	}
 	if err != nil {
-		return result, err
+		return Result{}, err
 	}
 	apiDirectory := options.Source
 	if !explicitSource {
@@ -64,12 +65,9 @@ func generateStandardControllers(project Project, options ControllerOptions) (Re
 	apiRootPath := filepath.Join(project.Resolve(apiRootDir), resource.Module, resource.Module+".go")
 	apiPath := filepath.Join(project.Resolve(apiDirectory), resource.File+".go")
 	apiSource := renderStandardAPI(apiPackageName(apiDirectory), apis)
-	if err := writeDeveloperOwned(project, &result, apiPath, apiSource, "API definition", options.DryRun); err != nil {
-		return result, err
-	}
 	contractAPIs, err := scanStandardControllerAPIs(project, apiDirectory, resource, apis)
 	if err != nil {
-		return result, err
+		return Result{}, err
 	}
 
 	packageName := goPackageName(resource.Module)
@@ -88,34 +86,29 @@ func generateStandardControllers(project Project, options ControllerOptions) (Re
 			}
 		}
 	}
-	if err := writeForced(project, &result, apiRootPath, renderAPIContracts(contractGroups, resource.Module, resource.Module), options.DryRun); err != nil {
-		return result, err
-	}
 	contract, err := renderControllerContracts(project, contractGroups, packageName, resource.Module)
 	if err != nil {
-		return result, err
-	}
-	if err := writePlanned(project, &result, generatedPath, contract, options.DryRun); err != nil {
-		return result, err
+		return Result{}, err
 	}
 	constructorPath := filepath.Join(project.Resolve(options.Destination), resource.Module, resource.Module+"_new.go")
 	constructor, err := renderControllerConstructors(packageName, contractGroups)
 	if err != nil {
-		return result, err
-	}
-	if err := writePlanned(project, &result, constructorPath, constructor, options.DryRun); err != nil {
-		return result, err
+		return Result{}, err
 	}
 
 	implementationPath := filepath.Join(project.Resolve(options.Destination), resource.Module, resource.Module+"_"+resource.Version+"_"+toSnake(resource.File)+".go")
 	implementation, err := renderControllerMethods(apis, packageName)
 	if err != nil {
-		return result, err
+		return Result{}, err
 	}
-	if err := writeDeveloperOwned(project, &result, implementationPath, implementation, "controller implementation", options.DryRun); err != nil {
-		return result, err
-	}
-	return result, nil
+	rendered := Rendered{Discovery: Discovery{Project: project, Options: options}, Outputs: []shared.Output{
+		{Path: apiPath, Content: apiSource, Mode: shared.OutputDeveloperOwned, Label: "API definition"},
+		{Path: apiRootPath, Content: renderAPIContracts(contractGroups, resource.Module, resource.Module), Mode: shared.OutputForced},
+		{Path: generatedPath, Content: contract, Mode: shared.OutputPlanned},
+		{Path: constructorPath, Content: constructor, Mode: shared.OutputPlanned},
+		{Path: implementationPath, Content: implementation, Mode: shared.OutputDeveloperOwned, Label: "controller implementation"},
+	}}
+	return (Pipeline{}).Publish(rendered)
 }
 
 // scanStandardControllerAPIs returns every API in the generated resource's
@@ -166,40 +159,6 @@ func scanStandardControllerAPIs(project Project, apiDirectory string, resource s
 		return filtered[left].Name < filtered[right].Name
 	})
 	return filtered, nil
-}
-
-func generateStandardService(project Project, options ServiceOptions) (Result, error) {
-	var result Result
-	module, err := normalizeResourceName(options.Name)
-	if err != nil {
-		return result, err
-	}
-	if options.Source == "" {
-		options.Source = defaultLogicSource
-	}
-	if options.Destination == "" {
-		options.Destination = defaultServiceDest
-	}
-	if err := ensureDemoModel(project, &result, options.DryRun); err != nil {
-		return result, err
-	}
-	resource := standardResource{Module: module, Version: standardVersion, File: module}
-	servicePath := filepath.Join(project.Resolve(options.Destination), module+".go")
-	modelImportPath := demoModelImportPath(project)
-	serviceSource := renderStandardService(resource, modelImportPath)
-	if err := writeReplacing(project, &result, servicePath, serviceSource, options.DryRun); err != nil {
-		return result, err
-	}
-
-	logicPath := filepath.Join(project.Resolve(options.Source), module, module+".go")
-	logicSource := renderStandardLogic(resource, project.ModulePath, modelImportPath)
-	if err := writeDeveloperOwned(project, &result, logicPath, logicSource, "Logic implementation", options.DryRun); err != nil {
-		return result, err
-	}
-	if err := syncLogicAggregator(project, options.Source, map[string][]LogicMethod{module: nil}, &result, options.DryRun); err != nil {
-		return result, err
-	}
-	return result, nil
 }
 
 func parseStandardResource(value string) (standardResource, error) {

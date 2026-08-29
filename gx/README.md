@@ -101,6 +101,9 @@ pseudo-version 从对应 commit 下载，只有本地 `(devel)` 构建使用 `ma
 根 `.env` 的 `.gitignore` 规则、canonical module、项目名和 PostgreSQL driver 校验通过后，才在 staging 中替换 module/项目名并
 提交目标。失败不会修改已有目标。
 
+Controller、Service 等普通生成写入统一经过 `internal/gen/fs` 的 staging transaction，先校验项目相对路径，
+再提交生成文件；DAO/Entity 继续使用双目录替换事务，以保证两个生成目录成对更新和失败回滚。
+
 仓库内 `examples/demo/go.mod` 使用本地 `replace` 以便 CI 验证；初始化时该 `replace` 和占位 gonex requirement
 会被移除。进入新项目运行 `go mod tidy` 后，Go 会解析当前发布的 gonex 版本。`--force` 会先备份再
 整体替换目标，而不是合并文件；使用前应确认目录可以被替换。新项目已经提交后若旧备份清理失败，

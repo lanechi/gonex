@@ -29,20 +29,22 @@ func (registry *Registry) Register(routes ...Definition) error {
 	}
 	pending := make(map[string]struct{}, len(routes))
 	for _, route := range routes {
-		if route.Method == "" || route.Path == "" {
+		metadata := route.Metadata
+		if metadata.Method == "" || metadata.Path == "" {
 			return fmt.Errorf("route method and path are required")
 		}
-		key := routeKey(route.Method, route.Path)
+		key := routeKey(metadata.Method, metadata.Path)
 		if _, exists := registry.keys[key]; exists {
-			return fmt.Errorf("route %s %s is already registered", route.Method, route.Path)
+			return fmt.Errorf("route %s %s is already registered", metadata.Method, metadata.Path)
 		}
 		if _, exists := pending[key]; exists {
-			return fmt.Errorf("duplicate route %s %s", route.Method, route.Path)
+			return fmt.Errorf("duplicate route %s %s", metadata.Method, metadata.Path)
 		}
 		pending[key] = struct{}{}
 	}
 	for _, route := range routes {
-		key := routeKey(route.Method, route.Path)
+		metadata := route.Metadata
+		key := routeKey(metadata.Method, metadata.Path)
 		registry.keys[key] = struct{}{}
 		registry.routes = append(registry.routes, cloneDefinition(route))
 	}
@@ -65,17 +67,15 @@ func (registry *Registry) List() []Definition {
 
 func routeKey(method, path string) string { return strings.ToUpper(method) + " " + path }
 func cloneDefinition(route Definition) Definition {
-	route.Tags = append([]string(nil), route.Tags...)
-	route.Security = append([]string(nil), route.Security...)
-	route.Produces = append([]string(nil), route.Produces...)
-	route.Consumes = append([]string(nil), route.Consumes...)
-	if route.Binder != nil {
-		binder := *route.Binder
-		binder.Fields = append([]FieldBinding(nil), route.Binder.Fields...)
-		for index := range binder.Fields {
-			binder.Fields[index].Index = append([]int(nil), binder.Fields[index].Index...)
-		}
-		route.Binder = &binder
+	route.Metadata.Tags = append([]string(nil), route.Metadata.Tags...)
+	route.Metadata.Security = append([]string(nil), route.Metadata.Security...)
+	route.Metadata.Produces = append([]string(nil), route.Metadata.Produces...)
+	route.Metadata.Consumes = append([]string(nil), route.Metadata.Consumes...)
+	route.Metadata.Bindings = cloneFieldBindings(route.Metadata.Bindings)
+	if route.Runtime.Binder != nil {
+		binder := *route.Runtime.Binder
+		binder.Fields = cloneFieldBindings(route.Runtime.Binder.Fields)
+		route.Runtime.Binder = &binder
 	}
 	return route
 }
@@ -89,7 +89,8 @@ func (registry *Registry) RouteTable(writer io.Writer) error {
 		return err
 	}
 	for _, route := range registry.List() {
-		if _, err := io.WriteString(writer, fmt.Sprintf("%-8s %-32s %s.%s\n", route.Method, route.Path, route.ControllerName, route.Action)); err != nil {
+		metadata := route.Metadata
+		if _, err := io.WriteString(writer, fmt.Sprintf("%-8s %-32s %s.%s\n", metadata.Method, metadata.Path, metadata.ControllerName, metadata.Action)); err != nil {
 			return err
 		}
 	}

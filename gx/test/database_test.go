@@ -89,6 +89,26 @@ func TestDatabaseModelGeneration(t *testing.T) {
 	}
 }
 
+func TestDatabaseGenerationFailureDoesNotPublishExistingOutput(t *testing.T) {
+	root := t.TempDir()
+	project := newProject(t, root)
+	clearDatabaseEnvironment(t)
+	writeDatabaseEnv(t, root, gen.DatabaseConfig{Driver: "sqlite", DSN: filepath.Join(root, "empty.db")})
+	servicePath := filepath.Join(root, "internal/dao/keep.go")
+	entityPath := filepath.Join(root, "internal/model/entity/keep.go")
+	writeFile(t, servicePath, "package dao\n\nconst Keep = true\n")
+	writeFile(t, entityPath, "package entity\n\nconst Keep = true\n")
+
+	if _, err := gen.GenerateModels(project, gen.ModelOptions{}); err == nil {
+		t.Fatal("empty database was accepted")
+	}
+	for _, path := range []string{servicePath, entityPath} {
+		if content := string(mustRead(t, path)); !strings.Contains(content, "Keep = true") {
+			t.Fatalf("generation failure replaced %s: %s", path, content)
+		}
+	}
+}
+
 func integrationDatabaseConfig(t *testing.T, driver string) (gen.DatabaseConfig, bool) {
 	t.Helper()
 	switch driver {

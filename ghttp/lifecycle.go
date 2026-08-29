@@ -11,13 +11,51 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/lanechi/gonex/lifecycle"
 	"github.com/lanechi/gonex/logging"
+	"github.com/lanechi/gonex/scheduler"
 )
 
 // LifecycleHook is invoked during server startup or shutdown.
 type LifecycleHook func(context.Context) error
+
+type schedulerLoggerSetter interface {
+	SetDefaultLogger(logging.Logger)
+}
+
+func (server *Server) configureScheduler() {
+	if !server.schedulerEnabled {
+		server.scheduler = nil
+		return
+	}
+	if server.scheduler == nil {
+		manager, err := scheduler.New(scheduler.WithLocation(server.schedulerLocationOrLocal()))
+		if err != nil {
+			server.addInitializationError(fmt.Errorf("configure scheduler: %w", err))
+			return
+		}
+		server.scheduler = manager
+	}
+	if configured, ok := server.scheduler.(schedulerLoggerSetter); ok {
+		configured.SetDefaultLogger(server.logger)
+	}
+	server.lifecycle.OnStart(func(ctx context.Context) error {
+		return server.scheduler.Start(ctx)
+	})
+	server.lifecycle.OnShutdown(func(context.Context) error {
+		server.scheduler.Stop()
+		return nil
+	})
+}
+
+func (server *Server) schedulerLocationOrLocal() *time.Location {
+	if server.schedulerLocation != nil {
+		return server.schedulerLocation
+	}
+	return time.Local
+}
 
 // RunTLS starts the server with a certificate and private key.
 func (server *Server) RunTLS(certFile, keyFile string) error {

@@ -10,45 +10,20 @@ import (
 	"github.com/lanechi/gonex/session"
 )
 
-// Session is the application-facing session contract.
-type Session interface {
-	Get(key string) (any, error)
-	Set(key string, value any) error
-	Delete(key string) error
-	Clear() error
-	ID() string
-	Regenerate() error
-	Logout() error
-}
-
-// SessionStorage is the persistence boundary for session implementations.
-type SessionStorage interface {
-	Get(id string) (map[string]any, error)
-	Set(id string, values map[string]any, ttl time.Duration) error
-	Delete(id string) error
-}
-
-// ContextSessionStorage is an optional SessionStorage extension for backends
-// that need the request context for I/O cancellation and tracing.
-type ContextSessionStorage interface {
-	GetContext(context.Context, string) (map[string]any, error)
-	SetContext(context.Context, string, map[string]any, time.Duration) error
-	DeleteContext(context.Context, string) error
-}
-
-var ErrSessionNotFound = session.ErrNotFound
-
 // SessionManager owns session cookies and delegates persistence to a storage
 // backend.
 type SessionManager struct {
-	storage       SessionStorage
+	storage       session.Storage
 	cookieName    string
 	ttl           time.Duration
 	cookieMu      sync.RWMutex
 	cookieOptions CookieOptions
 }
 
-func NewSessionManager(storage SessionStorage, cookieName string, ttl time.Duration) *SessionManager {
+// NewSessionManager creates an HTTP session manager over storage. Storage I/O
+// receives each request context; the application retains ownership of storage
+// and any external client it uses.
+func NewSessionManager(storage session.Storage, cookieName string, ttl time.Duration) *SessionManager {
 	if storage == nil {
 		storage = session.NewMemoryStorage()
 	}
@@ -83,7 +58,7 @@ func (manager *SessionManager) CookieOptions() CookieOptions {
 	return manager.cookieOptions
 }
 
-func (manager *SessionManager) Open(ctx *Context) (Session, error) {
+func (manager *SessionManager) Open(ctx *Context) (session.Session, error) {
 	if manager == nil || ctx == nil {
 		return nil, errors.New("session manager is not configured")
 	}
@@ -93,7 +68,7 @@ func (manager *SessionManager) Open(ctx *Context) (Session, error) {
 	values := make(map[string]any)
 	if !newID {
 		values, err = manager.get(ctx, id)
-		if errors.Is(err, ErrSessionNotFound) {
+		if errors.Is(err, session.ErrNotFound) {
 			values = make(map[string]any)
 			newID = true
 		} else if err != nil {
@@ -118,7 +93,7 @@ func (manager *SessionManager) Open(ctx *Context) (Session, error) {
 		}
 	}
 	if id == "" {
-		return nil, ErrSessionNotFound
+		return nil, session.ErrNotFound
 	}
 	if err := ctx.Cookie().Set(manager.cookieName, id, manager.CookieOptions()); err != nil {
 		if createdPersistentSession {
@@ -131,16 +106,6 @@ func (manager *SessionManager) Open(ctx *Context) (Session, error) {
 		managed.family = cookieStorage.Family(id)
 	}
 	return managed, nil
-}
-
-func (manager *SessionManager) Flush() error {
-	if manager == nil || manager.storage == nil {
-		return nil
-	}
-	if flusher, ok := manager.storage.(interface{ Flush() error }); ok {
-		return flusher.Flush()
-	}
-	return nil
 }
 
 func (manager *SessionManager) persist(current *managedSession) error {
@@ -198,24 +163,15 @@ func (manager *SessionManager) requestContext(ctx *Context) context.Context {
 }
 
 func (manager *SessionManager) get(ctx *Context, id string) (map[string]any, error) {
-	if storage, ok := manager.storage.(ContextSessionStorage); ok {
-		return storage.GetContext(manager.requestContext(ctx), id)
-	}
-	return manager.storage.Get(id)
+	return manager.storage.Get(manager.requestContext(ctx), id)
 }
 
 func (manager *SessionManager) set(ctx *Context, id string, values map[string]any) error {
-	if storage, ok := manager.storage.(ContextSessionStorage); ok {
-		return storage.SetContext(manager.requestContext(ctx), id, values, manager.ttl)
-	}
-	return manager.storage.Set(id, values, manager.ttl)
+	return manager.storage.Set(manager.requestContext(ctx), id, values, manager.ttl)
 }
 
 func (manager *SessionManager) delete(ctx *Context, id string) error {
-	if storage, ok := manager.storage.(ContextSessionStorage); ok {
-		return storage.DeleteContext(manager.requestContext(ctx), id)
-	}
-	return manager.storage.Delete(id)
+	return manager.storage.Delete(manager.requestContext(ctx), id)
 }
 
 type managedSession struct {

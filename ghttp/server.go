@@ -4,12 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"reflect"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -18,8 +16,8 @@ import (
 	"github.com/lanechi/gonex/lifecycle"
 	"github.com/lanechi/gonex/logging"
 	"github.com/lanechi/gonex/middleware"
-	"github.com/lanechi/gonex/openapi"
 	"github.com/lanechi/gonex/router"
+	"github.com/lanechi/gonex/scheduler"
 	"github.com/lanechi/gonex/template"
 )
 
@@ -29,10 +27,12 @@ const defaultAddress = ":8000"
 type Server struct {
 	name    string
 	address string
+	options serverOptions
 
-	engine     *gin.Engine
-	httpServer *http.Server
-	registry   *router.Registry
+	routingState
+	docsState
+	securityState
+	runtimeState
 
 	responseEncoder         ResponseEncoder
 	errorHandler            ErrorHandler
@@ -42,14 +42,9 @@ type Server struct {
 	customValidateValidator bool
 	logger                  logging.Logger
 	config                  Config
-	configSet               bool
 	mode                    string
 	debug                   bool
-	modeSet                 bool
-	sessionManager          *SessionManager
 	templates               *template.Manager
-	corsOptions             *CORSOptions
-	restartManager          RestartManager
 	readTimeout             time.Duration
 	writeTimeout            time.Duration
 	idleTimeout             time.Duration
@@ -60,60 +55,26 @@ type Server struct {
 	tlsEnabled              bool
 	tlsCertFile             string
 	tlsKeyFile              string
-	openapiEnabled          bool
-	openapiPath             string
-	swaggerPath             string
-	openapiRouteReady       bool
-	swaggerRouteReady       bool
-	addressSet              bool
-	readTimeoutSet          bool
-	writeTimeoutSet         bool
-	idleTimeoutSet          bool
-	bodyLimitSet            bool
-	multipartLimitSet       bool
-	headerLimitSet          bool
-	shutdownSet             bool
-	tlsSet                  bool
-	openapiSet              bool
 	requestIDEnabled        bool
-	openapiPathSet          bool
-	swaggerPathSet          bool
-	loggerSet               bool
-	sessionSet              bool
-	sessionCookieOptions    *CookieOptions
-	corsSet                 bool
-	templateRootSet         bool
-	allowedHosts            []string
-	allowedHostsSet         bool
-	csrfOptions             *CSRFOptions
-	csrfSet                 bool
-	settingsMu              sync.RWMutex
-	corsHandler             gin.HandlerFunc
-	csrfHandler             gin.HandlerFunc
-	openapiMu               sync.RWMutex
-	openapiCache            *openapi.Document
-	lifecycle               *lifecycle.Lifecycle
-	listenerMu              sync.RWMutex
-	listener                net.Listener
-	initializationErr       error
-	stateMu                 sync.RWMutex
-	running                 bool
-	staticRootReady         bool
-	registrationMu          sync.Mutex
-	routesRegistered        bool
-	routeMiddlewareMu       sync.RWMutex
-	routeMiddleware         map[string][]Middleware
 }
 
 // NewServer creates an independent Server instance.
 func NewServer(options ...Option) *Server {
 	defaultConfiguration := gonexconfig.Default()
 	defaultConfigurationErr := gonexconfig.Init()
+	server := newServerDefaults(defaultConfiguration)
+	for _, option := range options {
+		if option != nil {
+			option(server)
+		}
+	}
+	return server.initialize(defaultConfigurationErr)
+}
+
+func newServerDefaults(configuration Config) *Server {
 	server := &Server{
 		name:               "default",
 		address:            defaultAddress,
-		registry:           router.NewRegistry(),
-		openapiEnabled:     true,
 		readTimeout:        15 * time.Second,
 		writeTimeout:       15 * time.Second,
 		idleTimeout:        60 * time.Second,
@@ -121,15 +82,14 @@ func NewServer(options ...Option) *Server {
 		maxMultipartMemory: 32 << 20,
 		maxHeaderBytes:     1 << 20,
 		shutdownTimeout:    10 * time.Second,
-		openapiPath:        "/openapi.json",
-		swaggerPath:        "/docs",
 		requestIDEnabled:   true,
-		routeMiddleware:    make(map[string][]Middleware),
-		config:             defaultConfiguration,
+		config:             configuration,
+		routingState:       routingState{registry: router.NewRegistry(), routeMiddleware: make(map[string][]Middleware)},
+		docsState:          docsState{openapiEnabled: true, openapiPath: "/openapi.json", swaggerPath: "/docs"},
 	}
 	if logger := logging.InitialLogger(); logger != nil {
 		server.logger = logger
-		server.loggerSet = true
+		server.options.Logger = Optional[logging.Logger]{Value: server.logger, Set: true}
 	} else {
 		server.logger = logging.NewDefaultLogger()
 	}
@@ -137,19 +97,19 @@ func NewServer(options ...Option) *Server {
 	server.templates = template.New()
 	server.restartManager = &serverRestartManager{server: server}
 	server.lifecycle = lifecycle.New()
+	server.schedulerEnabled = true
 	server.responseEncoder = DefaultResponseEncoder{}
 	server.errorHandler = defaultErrorHandler
 	server.bindingValidator = newValidator("binding")
 	server.validateValidator = newValidator("validate")
-	for _, option := range options {
-		if option != nil {
-			option(server)
-		}
-	}
+	return server
+}
+
+func (server *Server) initialize(defaultConfigurationErr error) *Server {
 	if server.customBindingValidator && server.customValidateValidator && server.bindingValidator == server.validateValidator {
 		server.addInitializationError(fmt.Errorf("binding and validate validators must be independent instances"))
 	}
-	if !server.configSet && defaultConfigurationErr != nil {
+	if !server.options.Config.Set && defaultConfigurationErr != nil {
 		server.addInitializationError(defaultConfigurationErr)
 	}
 	server.applyLoggerConfig()
@@ -165,6 +125,7 @@ func NewServer(options ...Option) *Server {
 	// explicitly configured proxies are trusted.
 	_ = server.engine.SetTrustedProxies(nil)
 	server.applyConfig()
+	server.configureScheduler()
 	if server.sessionCookieOptions != nil && server.sessionManager != nil {
 		server.sessionManager.SetCookieOptions(*server.sessionCookieOptions)
 	}
@@ -270,6 +231,16 @@ func (server *Server) Logger() logging.Logger {
 	return server.logger
 }
 
+// Scheduler returns the Server-owned scheduler. It starts before the HTTP
+// listener and stops during graceful shutdown; each Server has an independent
+// scheduler instance unless an application intentionally supplies one.
+func (server *Server) Scheduler() scheduler.Scheduler {
+	if server == nil {
+		return nil
+	}
+	return server.scheduler
+}
+
 // SessionManager returns the configured session manager.
 func (server *Server) SessionManager() *SessionManager {
 	return server.sessionManager
@@ -282,7 +253,7 @@ func (server *Server) RestartManager() RestartManager {
 
 // SetTemplateRoot configures and loads the server template directory.
 func (server *Server) SetTemplateRoot(root string) error {
-	server.templateRootSet = true
+	server.options.TemplateRoot = Optional[string]{Value: root, Set: true}
 	return server.templates.SetRoot(root)
 }
 
@@ -300,7 +271,7 @@ func (server *Server) SetTrustedProxies(proxies []string) error {
 func (server *Server) SetAllowedHosts(hosts ...string) {
 	server.settingsMu.Lock()
 	defer server.settingsMu.Unlock()
-	server.allowedHostsSet = true
+	server.options.AllowedHosts = Optional[[]string]{Value: append([]string(nil), hosts...), Set: true}
 	server.allowedHosts = append([]string(nil), hosts...)
 }
 
@@ -311,7 +282,7 @@ func (server *Server) EnableCSRF(options CSRFOptions) error {
 	}
 	server.settingsMu.Lock()
 	defer server.settingsMu.Unlock()
-	server.csrfSet = true
+	server.options.CSRF = Optional[CSRFOptions]{Value: options, Set: true}
 	if options.Enabled {
 		copy := options
 		server.csrfOptions = &copy
@@ -486,13 +457,13 @@ func (server *Server) Shutdown(ctx context.Context) error {
 	if shutdownErr == nil {
 		shutdownErr = templateErr
 	}
+	if server.scheduler != nil {
+		if schedulerErr := server.scheduler.Wait(ctx); shutdownErr == nil {
+			shutdownErr = schedulerErr
+		}
+	}
 	if taskErr := server.lifecycle.Wait(ctx); shutdownErr == nil {
 		shutdownErr = taskErr
-	}
-	if flusher, ok := any(server.sessionManager).(interface{ Flush() error }); ok {
-		if err := flusher.Flush(); shutdownErr == nil {
-			shutdownErr = err
-		}
 	}
 	_ = server.logger.Sync()
 	if stopErr := server.lifecycle.Stop(ctx); shutdownErr == nil {
@@ -509,7 +480,7 @@ func (server *Server) Shutdown(ctx context.Context) error {
 func (server *Server) EnableOpenAPI(enabled bool) {
 	server.settingsMu.Lock()
 	server.openapiEnabled = enabled
-	server.openapiSet = true
+	server.options.OpenAPI = Optional[OpenAPIOptions]{Value: OpenAPIOptions{Enabled: enabled}, Set: true}
 	server.settingsMu.Unlock()
 }
 

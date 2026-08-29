@@ -18,7 +18,7 @@ func TestServerModeLoadsFromConfiguration(t *testing.T) {
 	server := ghttp.NewServer(
 		ghttp.WithConfig(configuration),
 		ghttp.WithLogger(logging.NewNopLogger()),
-		ghttp.WithOpenAPI(false),
+		ghttp.WithOpenAPI(ghttp.OpenAPIOptions{}),
 	)
 	if err := server.Err(); err != nil {
 		t.Fatal(err)
@@ -38,7 +38,7 @@ func TestServerModeOptionOverridesConfiguration(t *testing.T) {
 		ghttp.WithConfig(configuration),
 		ghttp.WithMode(ghttp.DebugMode),
 		ghttp.WithLogger(logging.NewNopLogger()),
-		ghttp.WithOpenAPI(false),
+		ghttp.WithOpenAPI(ghttp.OpenAPIOptions{}),
 	)
 	if err := server.Err(); err != nil {
 		t.Fatal(err)
@@ -57,7 +57,7 @@ func TestServerRejectsInvalidConfiguredMode(t *testing.T) {
 	server := ghttp.NewServer(
 		ghttp.WithConfig(configuration),
 		ghttp.WithLogger(logging.NewNopLogger()),
-		ghttp.WithOpenAPI(false),
+		ghttp.WithOpenAPI(ghttp.OpenAPIOptions{}),
 	)
 	if server.Err() == nil {
 		t.Fatal("invalid configured Gin mode did not produce an initialization error")

@@ -18,7 +18,7 @@ func TestTemplatePage(t *testing.T) {
 	}
 	server := ghttp.NewServer(
 		ghttp.WithConfig(config.Default()),
-		ghttp.WithOpenAPI(false),
+		ghttp.WithOpenAPI(ghttp.OpenAPIOptions{}),
 	)
 	defer func() { _ = server.Close() }()
 	if err := server.AddTemplateFunc("upper", strings.ToUpper); err != nil {

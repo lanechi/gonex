@@ -69,7 +69,7 @@ func (*sessionOperationController) Execute(ctx context.Context, request *session
 func TestSessionLogoutReopensWithinSameRequest(t *testing.T) {
 	tests := []struct {
 		name    string
-		storage ghttp.SessionStorage
+		storage session.Storage
 	}{
 		{name: "memory", storage: session.NewMemoryStorage()},
 		{name: "cookie", storage: session.NewCookieStorage([]byte("logout-reopen-cookie-secret"))},
@@ -118,7 +118,7 @@ func TestMemorySessionRegenerateDeleteClearAndLogout(t *testing.T) {
 	if response.Code != http.StatusOK || regeneratedCookie == nil || regeneratedCookie.Value == oldID {
 		t.Fatalf("regenerate response: status=%d old=%q cookie=%#v body=%s", response.Code, oldID, regeneratedCookie, response.Body.String())
 	}
-	if _, err := storage.Get(oldID); err != ghttp.ErrSessionNotFound {
+	if _, err := storage.Get(context.Background(), oldID); err != session.ErrNotFound {
 		t.Fatalf("old memory session was not removed: %v", err)
 	}
 
@@ -152,14 +152,14 @@ func TestCookieSessionRegenerateRevokesOldCookie(t *testing.T) {
 	if newCookie == nil || newCookie.Value == oldCookie.Value {
 		t.Fatalf("signed cookie was not regenerated: old=%#v new=%#v", oldCookie, newCookie)
 	}
-	if _, err := storage.Get(oldCookie.Value); err != ghttp.ErrSessionNotFound {
+	if _, err := storage.Get(context.Background(), oldCookie.Value); err != session.ErrNotFound {
 		t.Fatalf("old signed cookie can still be replayed: %v", err)
 	}
-	if values, err := storage.Get(newCookie.Value); err != nil || values["value"] != "stored" {
+	if values, err := storage.Get(context.Background(), newCookie.Value); err != nil || values["value"] != "stored" {
 		t.Fatalf("new signed cookie values=%#v err=%v", values, err)
 	}
 	_, logoutCookie := sessionOperationRequestToServer(t, server, "logout", newCookie)
-	if _, err := storage.Get(newCookie.Value); err != ghttp.ErrSessionNotFound {
+	if _, err := storage.Get(context.Background(), newCookie.Value); err != session.ErrNotFound {
 		t.Fatalf("logged-out signed cookie can still be replayed: %v", err)
 	}
 	if logoutCookie == nil || logoutCookie.MaxAge >= 0 {
@@ -180,15 +180,15 @@ func TestCookieSessionLogoutRevokesRotatedTokenFamily(t *testing.T) {
 		t.Fatalf("cookie rotation failed: A=%#v B=%#v", tokenA, tokenB)
 	}
 	_, _ = sessionOperationRequestToServer(t, server, "logout", tokenB)
-	if _, err := storage.Get(tokenA.Value); err != ghttp.ErrSessionNotFound {
+	if _, err := storage.Get(context.Background(), tokenA.Value); err != session.ErrNotFound {
 		t.Fatalf("replayed pre-rotation token remained valid after logout: %v", err)
 	}
-	if _, err := storage.Get(tokenB.Value); err != ghttp.ErrSessionNotFound {
+	if _, err := storage.Get(context.Background(), tokenB.Value); err != session.ErrNotFound {
 		t.Fatalf("replayed current token remained valid after logout: %v", err)
 	}
 
 	_, independent := sessionOperationRequestToServer(t, server, "set", nil)
-	if values, err := storage.Get(independent.Value); err != nil || values["value"] != "stored" {
+	if values, err := storage.Get(context.Background(), independent.Value); err != nil || values["value"] != "stored" {
 		t.Fatalf("logout revoked an independent session: values=%#v err=%v", values, err)
 	}
 }
@@ -204,13 +204,13 @@ func TestCookieSessionLogoutCoversInFlightFamilyRotations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := storage.Delete(tokenA); err != nil {
+	if err := storage.Delete(context.Background(), tokenA); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := storage.Get(tokenB); !errors.Is(err, ghttp.ErrSessionNotFound) {
+	if _, err := storage.Get(context.Background(), tokenB); !errors.Is(err, session.ErrNotFound) {
 		t.Fatalf("in-flight token remained valid after logout: %v", err)
 	}
-	if _, err := storage.EncodeWithFamily(map[string]any{"value": "late"}, 2*time.Hour, family); !errors.Is(err, ghttp.ErrSessionNotFound) {
+	if _, err := storage.EncodeWithFamily(map[string]any{"value": "late"}, 2*time.Hour, family); !errors.Is(err, session.ErrNotFound) {
 		t.Fatalf("revoked family accepted a late rotation: %v", err)
 	}
 }
@@ -270,19 +270,19 @@ type contextAwareSessionStorage struct {
 	lastContext context.Context
 }
 
-func (storage *contextAwareSessionStorage) GetContext(ctx context.Context, id string) (map[string]any, error) {
+func (storage *contextAwareSessionStorage) Get(ctx context.Context, id string) (map[string]any, error) {
 	storage.lastContext = ctx
-	return storage.Get(id)
+	return storage.MemoryStorage.Get(ctx, id)
 }
 
-func (storage *contextAwareSessionStorage) SetContext(ctx context.Context, id string, values map[string]any, ttl time.Duration) error {
+func (storage *contextAwareSessionStorage) Set(ctx context.Context, id string, values map[string]any, ttl time.Duration) error {
 	storage.lastContext = ctx
-	return storage.Set(id, values, ttl)
+	return storage.MemoryStorage.Set(ctx, id, values, ttl)
 }
 
-func (storage *contextAwareSessionStorage) DeleteContext(ctx context.Context, id string) error {
+func (storage *contextAwareSessionStorage) Delete(ctx context.Context, id string) error {
 	storage.lastContext = ctx
-	return storage.Delete(id)
+	return storage.MemoryStorage.Delete(ctx, id)
 }
 
 type sessionReuseRequest struct {

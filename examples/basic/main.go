@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"time"
 
 	"github.com/lanechi/gonex/g"
 	"github.com/lanechi/gonex/ghttp"
+	"github.com/lanechi/gonex/scheduler"
 )
 
 type HelloReq struct {
@@ -38,6 +40,9 @@ func (*HelloController) Names(context.Context, *HelloNamesReq) (HelloNamesRes, e
 
 func main() {
 	server := ghttp.NewServer(ghttp.WithMode(ghttp.DebugMode))
+	if err := registerBackgroundJobs(server); err != nil {
+		panic(err)
+	}
 
 	server.Group("/", func(group *ghttp.RouterGroup) {
 		if err := group.Bind(&HelloController{}); err != nil {
@@ -47,4 +52,15 @@ func main() {
 	if err := server.Run(); err != nil {
 		panic(err)
 	}
+}
+
+func registerBackgroundJobs(server *ghttp.Server) error {
+	return server.Scheduler().Add(scheduler.Job{
+		Name:     "basic-example-heartbeat",
+		Schedule: scheduler.Every{Duration: time.Hour},
+		Handler: func(ctx context.Context) error {
+			server.Logger().Info(ctx, "basic scheduler heartbeat")
+			return nil
+		},
+	})
 }

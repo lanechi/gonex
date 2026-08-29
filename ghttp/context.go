@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/lanechi/gonex/logging"
+	"github.com/lanechi/gonex/session"
 	"github.com/lanechi/gonex/template"
 )
 
@@ -27,7 +28,7 @@ type Context struct {
 	logger          logging.Logger
 	wroteResponse   bool
 	sessionMu       sync.Mutex
-	session         Session
+	session         session.Session
 }
 
 func newContext(ginContext *gin.Context) *Context {
@@ -233,7 +234,7 @@ func (ctx *Context) HTML(status int, name string, data any) error {
 }
 
 // Session opens the current request's session.
-func (ctx *Context) Session() (Session, error) {
+func (ctx *Context) Session() (session.Session, error) {
 	if ctx == nil || ctx.sessionManager == nil {
 		return nil, fmt.Errorf("session manager is not configured")
 	}

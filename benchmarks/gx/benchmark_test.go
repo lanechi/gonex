@@ -64,7 +64,7 @@ func newFrameworkServer(withRequestID bool) *frameworkhttp.Server {
 	return frameworkhttp.NewServer(
 		frameworkhttp.WithLogger(logging.NewNopLogger()),
 		frameworkhttp.WithRequestID(withRequestID),
-		frameworkhttp.WithOpenAPI(false),
+		frameworkhttp.WithOpenAPI(frameworkhttp.OpenAPIOptions{}),
 	)
 }
 

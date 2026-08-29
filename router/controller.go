@@ -11,25 +11,18 @@ var (
 	errorType   = reflect.TypeOf((*error)(nil)).Elem()
 )
 
+// RouteRuntime contains objects needed only to execute a registered route.
+// Documentation and route snapshots should use RouteMetadata instead.
+type RouteRuntime struct {
+	Controller  any
+	MethodValue reflect.Value
+	Binder      *Binder
+}
+
 // Definition is the framework-owned route representation.
 type Definition struct {
-	Method         string
-	Path           string
-	Controller     any
-	ControllerName string
-	Action         string
-	RequestType    reflect.Type
-	ResponseType   reflect.Type
-	Tags           []string
-	Summary        string
-	Description    string
-	OperationID    string
-	Deprecated     bool
-	Security       []string
-	Produces       []string
-	Consumes       []string
-	MethodValue    reflect.Value
-	Binder         *Binder
+	Metadata RouteMetadata
+	Runtime  RouteRuntime
 }
 
 // ScanController scans and converts a controller into route definitions.
@@ -52,10 +45,20 @@ func ScanController(controller any) ([]Definition, error) {
 	for index := 0; index < value.NumMethod(); index++ {
 		method := value.Method(index)
 		methodName := typeOfController.Method(index).Name
-		if err := validateControllerMethod(method.Type()); err != nil {
+		methodType := method.Type()
+		if methodType.NumIn() < 2 {
+			continue
+		}
+		requestType := methodType.In(1)
+		if requestType.Kind() != reflect.Ptr || requestType.Elem().Kind() != reflect.Struct {
+			continue
+		}
+		if _, ok := findMetaField(requestType.Elem()); !ok {
+			continue
+		}
+		if err := validateControllerMethod(methodType); err != nil {
 			return nil, fmt.Errorf("invalid controller method %s.%s: %w", controllerName, methodName, err)
 		}
-		requestType := method.Type().In(1)
 		metadata, err := ParseMeta(requestType)
 		if err != nil {
 			return nil, fmt.Errorf("invalid controller method %s.%s: %w", controllerName, methodName, err)
@@ -68,18 +71,28 @@ func ScanController(controller any) ([]Definition, error) {
 		if method.Type().NumOut() == 2 {
 			responseType = method.Type().Out(0)
 		}
+		metadata.RequestType = requestType
+		metadata.ResponseType = responseType
+		metadata.Bindings = cloneFieldBindings(binder.Fields)
+		metadata.ControllerName = controllerName
+		metadata.Action = methodName
 		routes = append(routes, Definition{
-			Method: metadata.Method, Path: metadata.Path, Controller: controller, ControllerName: controllerName, Action: methodName,
-			RequestType: requestType, ResponseType: responseType, Tags: metadata.Tags, Summary: metadata.Summary,
-			Description: metadata.Description, OperationID: metadata.OperationID, Deprecated: metadata.Deprecated,
-			Security: metadata.Security, Produces: metadata.Produces, Consumes: metadata.Consumes,
-			MethodValue: method, Binder: binder,
+			Metadata: metadata,
+			Runtime:  RouteRuntime{Controller: controller, MethodValue: method, Binder: binder},
 		})
 	}
 	if len(routes) == 0 {
 		return nil, fmt.Errorf("controller %s has no exported methods", controllerName)
 	}
 	return routes, nil
+}
+
+func cloneFieldBindings(fields []FieldBinding) []FieldBinding {
+	clone := append([]FieldBinding(nil), fields...)
+	for index := range clone {
+		clone[index].Index = append([]int(nil), clone[index].Index...)
+	}
+	return clone
 }
 
 // ValidatePathBindings verifies that Gin path wildcards and request path tags

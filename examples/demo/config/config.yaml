@@ -1,6 +1,9 @@
 server:
   address: ":8000"
   mode: debug
+  scheduler:
+    enabled: true
+    timezone: Local
   openapi:
     enabled: true
 

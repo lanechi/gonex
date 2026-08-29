@@ -57,7 +57,7 @@ func TestStaticFileAndRootMount(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("root"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	server := ghttp.NewServer(ghttp.WithLogger(&recordingLogger{}), ghttp.WithOpenAPI(false))
+	server := ghttp.NewServer(ghttp.WithLogger(&recordingLogger{}), ghttp.WithOpenAPI(ghttp.OpenAPIOptions{}))
 	if err := server.StaticFile("/asset.js", filePath); err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestStaticFileAndRootMount(t *testing.T) {
 		t.Fatalf("static file response: status=%d body=%q", response.Code, response.Body.String())
 	}
 
-	rootServer := ghttp.NewServer(ghttp.WithLogger(&recordingLogger{}), ghttp.WithOpenAPI(false))
+	rootServer := ghttp.NewServer(ghttp.WithLogger(&recordingLogger{}), ghttp.WithOpenAPI(ghttp.OpenAPIOptions{}))
 	if err := rootServer.Static("/", root); err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestConfiguredStaticExtensionAllowlist(t *testing.T) {
 	configuration.Set("server.static.enabled", true)
 	configuration.Set("server.static.root", root)
 	configuration.Set("server.static.extensions", []string{"txt"})
-	server := ghttp.NewServer(ghttp.WithConfig(configuration), ghttp.WithOpenAPI(false))
+	server := ghttp.NewServer(ghttp.WithConfig(configuration), ghttp.WithOpenAPI(ghttp.OpenAPIOptions{}))
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/static/asset.txt", nil))
 	if response.Code != http.StatusOK || response.Body.String() != "asset" {
@@ -129,7 +129,7 @@ func TestConfiguredStaticExtensionAllowlist(t *testing.T) {
 	configuration.Set("server.static.enabled", true)
 	configuration.Set("server.static.root", root)
 	configuration.Set("server.static.extensions", []string{})
-	server = ghttp.NewServer(ghttp.WithConfig(configuration), ghttp.WithOpenAPI(false))
+	server = ghttp.NewServer(ghttp.WithConfig(configuration), ghttp.WithOpenAPI(ghttp.OpenAPIOptions{}))
 	response = httptest.NewRecorder()
 	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/static/asset.txt", nil))
 	if response.Code != http.StatusNotFound {

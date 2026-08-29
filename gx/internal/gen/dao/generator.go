@@ -1,4 +1,4 @@
-package gen
+package dao
 
 import (
 	"bufio"
@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 
+	genfs "github.com/lanechi/gonex/gx/internal/gen/fs"
 	typemapping "github.com/lanechi/gonex/gx/internal/type_mapping"
 	"golang.org/x/mod/modfile"
 	"gorm.io/driver/mysql"
@@ -226,111 +227,208 @@ func inferDatabaseDriver(dsn, url string) string {
 
 // GenerateModels connects to the configured database and delegates schema
 // introspection and model/query rendering to gorm.io/gen.
-func GenerateModels(project Project, options ModelOptions) (result Result, err error) {
-	moduleBefore, err := snapshotModuleFiles(project.Root)
+// Generate introspects the database and transactionally replaces DAO and Entity output.
+func Generate(project Project, options ModelOptions) (Result, error) {
+	return (Pipeline{}).Run(project, options)
+}
+
+// Run performs Discovery→Generated→Rendered→Formatted→Validated→Staged→Commit.
+func (Pipeline) Run(project Project, options ModelOptions) (result Result, err error) {
+	discovery, err := discover(project, options)
 	if err != nil {
-		return result, err
+		return Result{}, fmt.Errorf("dao discover: %w", err)
 	}
-	var outputTransaction *modelOutputTransaction
-	moduleMutationStarted := false
 	defer func() {
-		if err == nil {
-			if outputTransaction != nil {
-				err = outputTransaction.Commit()
-			}
-			return
-		}
-		var rollbackErrors []error
-		if outputTransaction != nil {
-			if rollbackErr := outputTransaction.Rollback(); rollbackErr != nil {
-				rollbackErrors = append(rollbackErrors, rollbackErr)
-			}
-		}
-		if moduleMutationStarted {
-			if restoreErr := restoreModuleFiles(project.Root, moduleBefore); restoreErr != nil {
-				rollbackErrors = append(rollbackErrors, restoreErr)
-			}
-		}
-		if len(rollbackErrors) > 0 {
-			err = errors.Join(append([]error{err}, rollbackErrors...)...)
+		if discovery.closeDatabase != nil {
+			_ = discovery.closeDatabase()
 		}
 	}()
 
-	databaseConfig, err := LoadDatabaseEnv(project.Root)
+	generated, err := generate(discovery)
 	if err != nil {
-		return result, err
+		return Result{}, fmt.Errorf("dao generate: %w", err)
 	}
-	resolveDatabasePaths(project.Root, &databaseConfig)
-	database, err := openConfiguredDatabase(databaseConfig)
+	defer func() { _ = os.RemoveAll(generated.StageRoot) }()
+	rendered, err := render(generated)
 	if err != nil {
-		return result, err
+		return Result{}, fmt.Errorf("dao render: %w", err)
 	}
-	if sqlDatabase, dbErr := database.DB(); dbErr == nil {
-		defer sqlDatabase.Close()
+	formatted, err := formatRendered(rendered)
+	if err != nil {
+		return Result{}, fmt.Errorf("dao format: %w", err)
 	}
+	validated, err := validate(formatted)
+	if err != nil {
+		return Result{}, fmt.Errorf("dao validate: %w", err)
+	}
+	staged, err := stage(validated)
+	if err != nil {
+		return Result{}, fmt.Errorf("dao stage: %w", err)
+	}
+	defer func() {
+		if err == nil || staged.Transaction == nil {
+			return
+		}
+		rollbackErr := staged.Transaction.Rollback()
+		moduleErr := restoreModuleFiles(discovery.Project.Root, discovery.ModuleBefore)
+		if rollbackErr != nil || moduleErr != nil {
+			err = errors.Join(err, rollbackErr, moduleErr)
+		}
+	}()
+	if err := commit(&staged); err != nil {
+		return Result{}, fmt.Errorf("dao commit: %w", err)
+	}
+	return staged.Result, nil
+}
 
-	outputRoot := project.Resolve(defaultModelOutput)
-	modelRoot := project.Resolve(defaultEntityOutput)
-	before, err := snapshotFiles(project.Root, outputRoot, modelRoot)
+func discover(project Project, options ModelOptions) (Discovery, error) {
+	moduleBefore, err := snapshotModuleFiles(project.Root)
 	if err != nil {
-		return result, err
+		return Discovery{}, err
 	}
-	stageRoot, err := os.MkdirTemp(project.Root, "gx-model-stage-")
+	config, err := LoadDatabaseEnv(project.Root)
 	if err != nil {
-		return result, fmt.Errorf("create model generation staging directory: %w", err)
+		return Discovery{}, err
 	}
-	defer os.RemoveAll(stageRoot)
-	stageDAO := filepath.Join(stageRoot, "dao")
-	stageEntity := filepath.Join(stageRoot, "entity")
-	if isPostgresDriver(databaseConfig.Driver) {
-		err = generatePostgresModels(project, database, options.Tables, stageDAO, stageEntity)
+	resolveDatabasePaths(project.Root, &config)
+	database, err := openConfiguredDatabase(config)
+	if err != nil {
+		return Discovery{}, err
+	}
+	discovery := Discovery{Project: project, Options: options, Config: config, Database: database, ModuleBefore: moduleBefore, OutputRoot: project.Resolve(defaultModelOutput), ModelRoot: project.Resolve(defaultEntityOutput)}
+	if sqlDatabase, dbErr := database.DB(); dbErr == nil {
+		discovery.closeDatabase = sqlDatabase.Close
+	}
+	discovery.Before, err = snapshotFiles(project.Root, discovery.OutputRoot, discovery.ModelRoot)
+	if err != nil {
+		if discovery.closeDatabase != nil {
+			_ = discovery.closeDatabase()
+		}
+		return Discovery{}, err
+	}
+	return discovery, nil
+}
+
+func generate(discovery Discovery) (Generated, error) {
+	stageRoot, err := os.MkdirTemp(discovery.Project.Root, "gx-model-stage-")
+	if err != nil {
+		return Generated{}, fmt.Errorf("create model generation staging directory: %w", err)
+	}
+	generated := Generated{Discovery: discovery, StageRoot: stageRoot, StageDAO: filepath.Join(stageRoot, "dao"), StageEntity: filepath.Join(stageRoot, "entity")}
+	if isPostgresDriver(discovery.Config.Driver) {
+		err = generatePostgresModels(discovery.Project, discovery.Database, discovery.Options.Tables, generated.StageDAO, generated.StageEntity)
 	} else {
-		err = generateModels(database, stageDAO, stageEntity, splitTables(options.Tables))
+		err = generateModels(discovery.Database, generated.StageDAO, generated.StageEntity, splitTables(discovery.Options.Tables))
 	}
 	if err != nil {
-		return result, err
+		_ = os.RemoveAll(stageRoot)
+		return Generated{}, err
 	}
-	if err := removeGeneratedImportAliases(stageDAO, stageEntity); err != nil {
-		return result, err
+	return generated, nil
+}
+
+func render(generated Generated) (Rendered, error) {
+	if err := removeGeneratedImportAliases(generated.StageDAO, generated.StageEntity); err != nil {
+		return Rendered{}, err
 	}
-	if err := rewriteGeneratedImport(stageDAO, projectImportPath(project, stageEntity), projectImportPath(project, modelRoot)); err != nil {
-		return result, fmt.Errorf("rewrite staged DAO entity import: %w", err)
+	if err := rewriteGeneratedImport(generated.StageDAO, projectImportPath(generated.Discovery.Project, generated.StageEntity), projectImportPath(generated.Discovery.Project, generated.Discovery.ModelRoot)); err != nil {
+		return Rendered{}, fmt.Errorf("rewrite staged DAO entity import: %w", err)
 	}
-	if err := addGeneratedModelHeaders(stageDAO, stageEntity); err != nil {
-		return result, err
+	if err := addGeneratedModelHeaders(generated.StageDAO, generated.StageEntity); err != nil {
+		return Rendered{}, err
 	}
-	if err := sanitizeGeneratedStructTags(stageDAO, stageEntity); err != nil {
-		return result, err
+	if err := sanitizeGeneratedStructTags(generated.StageDAO, generated.StageEntity); err != nil {
+		return Rendered{}, err
 	}
-	if err := validateGeneratedModelOutput(stageDAO, stageEntity); err != nil {
-		return result, err
+	return Rendered{Generated: generated}, nil
+}
+
+func formatRendered(rendered Rendered) (Formatted, error) {
+	if err := formatGeneratedModelOutput(rendered.Generated.StageDAO, rendered.Generated.StageEntity); err != nil {
+		return Formatted{}, err
 	}
-	outputTransaction, err = replaceModelOutputDirectories(project, stageDAO, stageEntity)
+	return Formatted{Rendered: rendered}, nil
+}
+
+func validate(formatted Formatted) (Validated, error) {
+	if err := validateGeneratedModelOutput(formatted.Rendered.Generated.StageDAO, formatted.Rendered.Generated.StageEntity); err != nil {
+		return Validated{}, err
+	}
+	return Validated{Formatted: formatted}, nil
+}
+
+func stage(validated Validated) (Staged, error) {
+	generated := validated.Formatted.Rendered.Generated
+	transaction, err := genfs.BeginDirectoryTransaction(generated.Discovery.Project.Root,
+		genfs.DirectorySwap{Stage: generated.StageDAO, Target: defaultModelOutput},
+		genfs.DirectorySwap{Stage: generated.StageEntity, Target: defaultEntityOutput},
+	)
 	if err != nil {
-		return result, err
+		return Staged{}, err
 	}
-	after, err := snapshotFiles(project.Root, outputRoot, modelRoot)
+	after, err := snapshotFiles(generated.Discovery.Project.Root, generated.Discovery.OutputRoot, generated.Discovery.ModelRoot)
 	if err != nil {
-		return result, err
+		_ = transaction.Rollback()
+		return Staged{}, err
 	}
-	addFileChanges(&result, before, after)
-	moduleMutationStarted = true
-	if err := ensureModelDependencies(project, &result); err != nil {
-		return result, err
+	staged := Staged{Validated: validated, Transaction: transaction}
+	addFileChanges(&staged.Result, generated.Discovery.Before, after)
+	return staged, nil
+}
+
+func commit(staged *Staged) error {
+	if staged == nil {
+		return fmt.Errorf("staged DAO product is required")
 	}
-	tidy := options.runTidy
+	discovery := staged.Validated.Formatted.Rendered.Generated.Discovery
+	if err := ensureModelDependencies(discovery.Project, &staged.Result); err != nil {
+		return err
+	}
+	tidy := discovery.Options.runTidy
 	if tidy == nil {
 		tidy = runGoModTidy
 	}
-	if err := tidy(project.Root); err != nil {
-		return result, err
+	if err := tidy(discovery.Project.Root); err != nil {
+		return err
 	}
-	moduleAfter, err := snapshotModuleFiles(project.Root)
+	moduleAfter, err := snapshotModuleFiles(discovery.Project.Root)
 	if err != nil {
-		return result, err
+		return err
 	}
-	addModuleFileChanges(&result, moduleBefore, moduleAfter)
-	return result, nil
+	addModuleFileChanges(&staged.Result, discovery.ModuleBefore, moduleAfter)
+	if staged.Transaction == nil {
+		return nil
+	}
+	return staged.Transaction.Commit()
+}
+
+func formatGeneratedModelOutput(roots ...string) error {
+	for _, root := range roots {
+		err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if info.IsDir() || filepath.Ext(path) != ".go" {
+				return nil
+			}
+			content, readErr := os.ReadFile(path)
+			if readErr != nil {
+				return readErr
+			}
+			formatted, formatErr := format.Source(content)
+			if formatErr != nil {
+				return fmt.Errorf("format generated model %s: %w", path, formatErr)
+			}
+			if bytes.Equal(content, formatted) {
+				return nil
+			}
+			return os.WriteFile(path, formatted, info.Mode().Perm())
+		})
+		if err != nil {
+			return fmt.Errorf("format generated model output %s: %w", root, err)
+		}
+	}
+	return nil
 }
 
 func validateGeneratedModelOutput(roots ...string) error {
@@ -539,109 +637,6 @@ func validateStructTag(tag string) error {
 		if remaining != "" && remaining[0] != ' ' {
 			return fmt.Errorf("struct tag values are not space-separated: %q", tag)
 		}
-	}
-	return nil
-}
-
-type modelOutputTarget struct {
-	stage     string
-	target    string
-	backup    string
-	hadTarget bool
-	prepared  bool
-	installed bool
-}
-
-type modelOutputTransaction struct {
-	backupRoot   string
-	targets      []modelOutputTarget
-	removeBackup func(string) error
-	done         bool
-}
-
-// replaceModelOutputDirectories starts a transaction that swaps both staged
-// trees into place. The caller must commit after all remaining work succeeds,
-// or roll back to restore the previous DAO and Entity trees.
-func replaceModelOutputDirectories(project Project, stageDAO, stageEntity string) (*modelOutputTransaction, error) {
-	backupRoot, err := os.MkdirTemp(project.Root, ".gx-model-backup-")
-	if err != nil {
-		return nil, fmt.Errorf("create model backup directory: %w", err)
-	}
-	transaction := &modelOutputTransaction{backupRoot: backupRoot, removeBackup: os.RemoveAll, targets: []modelOutputTarget{
-		{stage: stageDAO, target: project.Resolve(defaultModelOutput), backup: filepath.Join(backupRoot, "dao")},
-		{stage: stageEntity, target: project.Resolve(defaultEntityOutput), backup: filepath.Join(backupRoot, "entity")},
-	}}
-	for index := range transaction.targets {
-		target := &transaction.targets[index]
-		if _, err := os.Stat(target.target); err == nil {
-			if err := os.Rename(target.target, target.backup); err != nil {
-				rollbackErr := transaction.Rollback()
-				return nil, errors.Join(fmt.Errorf("stage existing model output %s: %w", target.target, err), rollbackErr)
-			}
-			target.hadTarget = true
-		} else if !os.IsNotExist(err) {
-			rollbackErr := transaction.Rollback()
-			return nil, errors.Join(fmt.Errorf("stat model output %s: %w", target.target, err), rollbackErr)
-		}
-		target.prepared = true
-	}
-	for index := range transaction.targets {
-		target := &transaction.targets[index]
-		if err := os.MkdirAll(filepath.Dir(target.target), 0o755); err != nil {
-			rollbackErr := transaction.Rollback()
-			return nil, errors.Join(fmt.Errorf("create model output parent %s: %w", target.target, err), rollbackErr)
-		}
-		if err := os.Rename(target.stage, target.target); err != nil {
-			rollbackErr := transaction.Rollback()
-			return nil, errors.Join(fmt.Errorf("install generated model output %s: %w", target.target, err), rollbackErr)
-		}
-		target.installed = true
-	}
-	return transaction, nil
-}
-
-func (transaction *modelOutputTransaction) Rollback() error {
-	if transaction == nil || transaction.done {
-		return nil
-	}
-	transaction.done = true
-	var rollbackErrors []error
-	for index := len(transaction.targets) - 1; index >= 0; index-- {
-		target := transaction.targets[index]
-		if !target.prepared {
-			continue
-		}
-		if target.installed {
-			if err := os.RemoveAll(target.target); err != nil {
-				rollbackErrors = append(rollbackErrors, fmt.Errorf("remove generated model output %s: %w", target.target, err))
-				continue
-			}
-		}
-		if target.hadTarget {
-			if err := os.Rename(target.backup, target.target); err != nil {
-				rollbackErrors = append(rollbackErrors, fmt.Errorf("restore model output %s: %w", target.target, err))
-			}
-		}
-	}
-	if len(rollbackErrors) == 0 {
-		if err := os.RemoveAll(transaction.backupRoot); err != nil {
-			rollbackErrors = append(rollbackErrors, fmt.Errorf("remove model backup directory: %w", err))
-		}
-	}
-	return errors.Join(rollbackErrors...)
-}
-
-func (transaction *modelOutputTransaction) Commit() error {
-	if transaction == nil || transaction.done {
-		return nil
-	}
-	transaction.done = true
-	removeBackup := transaction.removeBackup
-	if removeBackup == nil {
-		removeBackup = os.RemoveAll
-	}
-	if err := removeBackup(transaction.backupRoot); err != nil {
-		return fmt.Errorf("model output committed but remove backup %s: %w; backup retained", transaction.backupRoot, err)
 	}
 	return nil
 }
@@ -1114,7 +1109,7 @@ func ensureModelDependencies(project Project, result *Result) error {
 	if err := os.WriteFile(path, updated, 0o644); err != nil {
 		return fmt.Errorf("update project go.mod: %w", err)
 	}
-	result.add("UPDATE", "go.mod", "added GORM model generation dependencies")
+	result.Add("UPDATE", "go.mod", "added GORM model generation dependencies")
 	return nil
 }
 
@@ -1178,7 +1173,7 @@ func addModuleFileChanges(result *Result, before, after map[string][]byte) {
 		if hasChangePath(*result, path) {
 			continue
 		}
-		result.add(kind, path, "go mod tidy")
+		result.Add(kind, path, "go mod tidy")
 	}
 }
 
@@ -1446,11 +1441,11 @@ func addFileChanges(result *Result, before, after map[string][]byte) {
 		_, existsAfter := after[path]
 		switch {
 		case !existedBefore && existsAfter:
-			result.add("CREATE", path, "gorm model generated")
+			result.Add("CREATE", path, "gorm model generated")
 		case existedBefore && !existsAfter:
-			result.add("DELETE", path, "gorm model removed")
+			result.Add("DELETE", path, "gorm model removed")
 		case existedBefore && existsAfter:
-			result.add("UPDATE", path, "gorm model regenerated")
+			result.Add("UPDATE", path, "gorm model regenerated")
 		}
 	}
 }

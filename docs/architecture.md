@@ -27,7 +27,7 @@ flowchart LR
     App --> HTTP[ghttp 编排层]
     G --> HTTP
     HTTP --> Router[router 契约层]
-    HTTP --> Runtime[配置 / 日志 / 安全 / Session / 模板 / 生命周期]
+    HTTP --> Runtime[配置 / 日志 / 安全 / Session / 模板 / scheduler / 生命周期]
     HTTP --> Gin[Gin 执行引擎]
     Router --> OpenAPI[openapi 文档模型]
     HTTP --> OpenAPI
@@ -48,13 +48,18 @@ flowchart LR
 
 ### 3.1 入口与编排
 
-`g` 提供 `g.Meta`、`g.Server(name...)`、`g.Cfg()` 等便捷入口。命名 Server 是进程级缓存，
+`g` 提供 `g.Meta`、`g.Server(name...)`、`g.Cfg()` 等便捷入口，并只保留少量通用 `Map`/`List`
+类型别名。命名 Server 是进程级缓存，
 同名返回同一实例，不同名称返回隔离实例。需要完全独立、无命名缓存的 Server 时直接调用
 `ghttp.NewServer`。
 
 `ghttp` 是组合根。`Server` 拥有 Gin Engine、框架路由表、响应编码器、错误处理器、
-Logger、SessionManager、模板管理器、OpenAPI 缓存、配置快照和生命周期。它负责把较小的
+Logger、SessionManager、模板管理器、Scheduler、OpenAPI 缓存、配置快照和生命周期。它负责把较小的
 组件按固定顺序组装起来，而不是把每种能力的实现都写进一个文件。
+
+`Engine()` 和 `HTTPServer()` 是明确、受限的 escape hatch：它们服务于必须接入 Gin 或 `net/http`
+对象的第三方设施。业务路由必须继续经由 `Bind`、`Group` 或 `Route` 注册，且不得替换 HTTP Handler
+或重排框架 Middleware，否则 Registry、OpenAPI 缓存和批量注册原子性将无法保证。
 
 ### 3.2 路由契约
 
@@ -62,6 +67,12 @@ Logger、SessionManager、模板管理器、OpenAPI 缓存、配置快照和生�
 这里完成反射、类型校验和字段路径收集；路由参数契约在 `ghttp` 注册最终路径时检查，因此
 RouterGroup 前缀声明的参数也会参与一一对应校验。请求热路径只实例化请求、绑定值、执行校验并
 调用 Controller。
+
+Controller 扫描只将带有效 `g.Meta` 请求类型的导出方法视为路由 Action；普通导出辅助方法不会被
+误报为路由，但声明了 `g.Meta` 的错误 Action 仍会严格校验并返回错误。
+
+核心 module 的 `test/architecture_test.go` 会扫描生产 Go 文件并拒绝 `router`、`config`、`logging`、
+`session`、`openapi`、`lifecycle` 反向导入 `ghttp`，使包边界成为可执行约束。
 
 框架维护自己的 `Registry`，因为 Gin 的路由树只适合执行，不足以承担路由快照、OpenAPI、
 隔离测试和框架级冲突语义。Registry 对外返回深拷贝，调用方不能修改 Server 内部状态。
@@ -72,14 +83,19 @@ RouterGroup 前缀声明的参数也会参与一一对应校验。请求热路�
   Set/Get/Unmarshal 由实例锁保护；Server 只依赖小型 `Config` 接口。
 - `logging` 定义结构化 Logger；Zap、标准库日志和 Gin 输出都汇入同一接口。
 - `middleware` 提供无 Server 状态的底层实现，`ghttp` 决定安装时机和动态配置。
-- `session` 定义存储边界并提供内存、签名 Cookie、Redis 后端；可选 ContextStorage 把请求取消和
-  tracing 传到 I/O。Cookie Token 族撤销是进程内状态；共享 Redis client 的所有权仍属于应用，
-  只有显式 Owned storage 才在 Flush 时关闭 client。
+- `session` 定义 context-first 存储边界并提供内存、签名 Cookie 后端；core 不提供 Redis 驱动的
+  存储或 Redis client 构造。业务实现 `session.Storage` 并拥有其外部 client 的生命周期；
+  `contrib/redislog` 只将 go-redis 诊断日志适配为 `logging.Logger`，不持有或关闭 client。Cookie
+  Token 族撤销是进程内状态，跨副本持久化由业务的服务端存储负责。
 - `template`、`static` 分别管理模板生命周期和安全文件访问；模板函数先校验再提交。静态资源拒绝
   越界、编码绕过、反斜杠和符号链接逃逸，再按扩展名白名单授权；GET/HEAD 先在临时路由树整组
   验证，注册失败不留下部分状态。
 - `lifecycle` 管理 Hook、任务取消和等待，`ghttp` 把它连接到监听器和系统信号。
-- `openapi` 从框架路由定义生成文档；Swagger 只是同一文档能力的 UI。
+- `scheduler` 提供 Cron、固定间隔和一次性任务的独立公共契约；内部引擎不向应用泄漏第三方类型。
+  它负责命名、任务 Context、超时、panic recovery、结构化日志和重入策略。其生命周期是
+  `Start(ctx)`、非阻塞 `Stop()`、`Wait(ctx)` 三阶段，`ghttp` 负责托管这些阶段。
+- `openapi` 从 `router.Definition` 的 `RouteMetadata` 视图生成文档；执行所需的反射方法和 Binder
+  位于独立的 `RouteRuntime` 视图。Swagger 只是同一文档能力的 UI。
 
 ### 3.4 生成器、示例与 AI skills
 
@@ -107,7 +123,7 @@ commit，只有本地开发构建读取 `main`；下载 GitHub archive 中的规
 
 `ghttp.NewServer` 按以下顺序构造实例：
 
-1. 创建安全默认值、Registry、Logger、Session、模板、生命周期和响应组件；
+1. 创建安全默认值、Registry、Logger、Session、模板、Scheduler、生命周期和响应组件；
 2. 应用显式 Option；
 3. 加载并应用默认配置，Option 保持更高优先级；
 4. 在创建 Gin Engine 前确定 Gin mode；
@@ -215,7 +231,7 @@ OpenAPI JSON 和 Swagger UI 共用 `openapiEnabled` 总开关；默认路径分�
 | --- | --- |
 | 路由表与注册状态 | Server；注册串行化，启动后不可改变拓扑 |
 | OpenAPI cache | Server；路由提交后失效，读写加锁 |
-| 配置、Logger、Session、模板 | Server；实例间不共享可变状态；同一请求缓存一个 Session，Logout 后驱逐并可重新打开 |
+| 配置、Logger、Session、模板、Scheduler | Server；实例间不共享可变状态；同一请求缓存一个 Session，Logout 后驱逐并可重新打开；Scheduler 的任务名和重入状态也仅属于该 Server |
 | 动态安全设置 | Server；请求读取快照，更新时加锁 |
 | Listener 与运行状态 | Server；防止重复启动和运行期危险修改 |
 | 生命周期 Hook 与任务 | Lifecycle；阶段成功状态只提交一次，失败轮次可重试；Server 启动失败后终止该实例；任务在关闭时取消并等待 |
@@ -243,11 +259,14 @@ CSRF 使用 double-submit cookie、`SameSite=None` 必须配合 Secure、release
 
 ## 10. 生命周期
 
-启动顺序为 `OnStart` → 创建/绑定 Listener → `OnStarted` → Serve。两组启动 Hook 都只在全部成功后
-提交各自阶段状态。独立 `lifecycle.Lifecycle` 的同阶段并发调用等待正在执行的同一轮，失败轮次可
-重试；HTTP `Server.Run*` 不支持并发运行，启动失败会执行完整 Shutdown，该 Server 实例不再复用。
-关闭时取消跟踪任务并执行 `OnShutdown`，关闭 HTTP Server 与模板，等待任务，Flush
-Session/Logger，最后执行 `OnStop`。
+启动顺序为 `OnStart` → 创建/绑定 Listener → `OnStarted` → Serve。Scheduler 作为 `OnStart` Hook
+调用 `Start(ctx)`，因此 HTTP 开始接收请求前任务已具备调度能力。两组启动 Hook 都只在全部成功后提交各自
+阶段状态。独立 `lifecycle.Lifecycle` 的同阶段并发调用等待正在执行的同一轮，失败轮次可重试；HTTP
+`Server.Run*` 不支持并发运行，启动失败会执行完整 Shutdown，该 Server 实例不再复用。关闭时先取消跟踪
+任务、执行 `OnShutdown`（其中 Scheduler 只调用非阻塞 `Stop()` 取消未来触发和运行中任务 Context），再关闭
+HTTP Server 与模板并 drain 活跃请求，随后调用 Scheduler `Wait(ctx)`，最后等待其他任务、Flush
+Session/Logger 和执行 `OnStop`。这避免长期任务等待阻塞 HTTP drain。Scheduler 不实现持久化、分布式锁、
+业务重试或队列；`server.scheduler.enabled` 和 `server.scheduler.timezone` 只配置本地调度，不声明业务 Job。
 
 业务数据库、消息消费者等外部资源由应用创建，并通过 Hook 释放。框架不猜测资源所有权；注入的
 共享 client 默认不由框架关闭。
@@ -272,3 +291,7 @@ Session/Logger，最后执行 `OnStop`。
 
 仅内部重构若不影响生成器、示例或文档内容，也必须完成上述检查，并在交付记录中说明不受影响的
 依据。完整执行规则见 [`AGENTS.md`](../AGENTS.md)。
+
+核心公共包的导出类型、函数、方法、常量和变量由 `test/testdata/public_api.golden` 形成确定性
+基线。测试会报告新增、删除和签名变化；更新基线属于公开契约变更的一部分，必须与兼容性说明和
+相关 example 一并审查。

@@ -20,7 +20,7 @@ examples/
 | 示例 | 默认地址 | 证明的能力 |
 | --- | --- | --- |
 | [`demo`](demo/README.md) | `:8000` | `gx init` 唯一规范模板、API→Controller→Service→Logic、PostgreSQL |
-| [`basic`](basic/README.md) | `:8000` | 最小 Server、`g.Meta`、query 绑定、统一响应、值类型响应、OpenAPI |
+| [`basic`](basic/README.md) | `:8000` | 最小 Server、`g.Meta`、query 绑定、统一响应、值类型响应、OpenAPI、Server 托管 scheduler |
 | [`quick-demo`](quick-demo/README.md) | `:8000`/`:8001`/`:8002` | 分层 API→Service→Logic、PostgreSQL、GORM、多 Server 和持续生成 |
 | [`template-demo`](template-demo/README.md) | `:8002` | HTML 模板、配置、渲染和模板热加载 |
 
@@ -95,6 +95,7 @@ go test ./...
 - 路由、绑定、响应、Middleware：优先更新 `basic` 或 `quick-demo`；
 - 配置、数据库脚手架、生成目录：更新 `quick-demo`，并与 `gx init` 模板对齐；
 - 模板能力：更新 `template-demo`；
+- Scheduler、生命周期或后台任务能力：更新 `basic` 或 `quick-demo`，并说明 Server 托管与任务取消语义；
 - 所有 example 的命令、端口、路由或目录变化：同步本 README 和该 example README。
 - API/Controller/Logic/Service 的推荐写法变化：同步对应 example 和 `demo/.agents/skills/` 中的相关 skill，确保 AI 规则
   可以由实际代码验证。

@@ -11,11 +11,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
-
-	"github.com/redis/go-redis/v9"
 )
 
 var ErrNotFound = errors.New("session not found")
@@ -31,19 +28,13 @@ type Session interface {
 	Logout() error
 }
 
-// Storage is the persistence boundary for session implementations.
+// Storage is the context-first persistence boundary for session
+// implementations. Implementations must not retain ctx after an operation
+// returns.
 type Storage interface {
-	Get(id string) (map[string]any, error)
-	Set(id string, values map[string]any, ttl time.Duration) error
-	Delete(id string) error
-}
-
-// ContextStorage is an optional Storage extension for request-scoped I/O.
-// Implementations must not retain ctx after the operation returns.
-type ContextStorage interface {
-	GetContext(context.Context, string) (map[string]any, error)
-	SetContext(context.Context, string, map[string]any, time.Duration) error
-	DeleteContext(context.Context, string) error
+	Get(ctx context.Context, id string) (map[string]any, error)
+	Set(ctx context.Context, id string, values map[string]any, ttl time.Duration) error
+	Delete(ctx context.Context, id string) error
 }
 
 type memorySessionEntry struct {
@@ -61,20 +52,20 @@ func NewMemoryStorage() *MemoryStorage {
 	return &MemoryStorage{entries: make(map[string]memorySessionEntry)}
 }
 
-func (storage *MemoryStorage) Get(id string) (map[string]any, error) {
+func (storage *MemoryStorage) Get(_ context.Context, id string) (map[string]any, error) {
 	storage.mu.RLock()
 	entry, ok := storage.entries[id]
 	storage.mu.RUnlock()
 	if !ok || (!entry.expiresAt.IsZero() && time.Now().After(entry.expiresAt)) {
 		if ok {
-			_ = storage.Delete(id)
+			_ = storage.Delete(context.Background(), id)
 		}
 		return nil, ErrNotFound
 	}
 	return cloneValues(entry.values), nil
 }
 
-func (storage *MemoryStorage) Set(id string, values map[string]any, ttl time.Duration) error {
+func (storage *MemoryStorage) Set(_ context.Context, id string, values map[string]any, ttl time.Duration) error {
 	entry := memorySessionEntry{values: cloneValues(values)}
 	if ttl > 0 {
 		entry.expiresAt = time.Now().Add(ttl)
@@ -85,14 +76,12 @@ func (storage *MemoryStorage) Set(id string, values map[string]any, ttl time.Dur
 	return nil
 }
 
-func (storage *MemoryStorage) Delete(id string) error {
+func (storage *MemoryStorage) Delete(_ context.Context, id string) error {
 	storage.mu.Lock()
 	delete(storage.entries, id)
 	storage.mu.Unlock()
 	return nil
 }
-
-func (storage *MemoryStorage) Flush() error { return nil }
 
 // CookieStorage stores signed, JSON-encoded session values in the cookie.
 // Revoked tokens are retained until expiry so Regenerate and Logout cannot
@@ -123,7 +112,7 @@ type cookiePayload struct {
 	Values    map[string]any `json:"values"`
 }
 
-func (storage *CookieStorage) Get(id string) (map[string]any, error) {
+func (storage *CookieStorage) Get(_ context.Context, id string) (map[string]any, error) {
 	payload, err := storage.decode(id)
 	if err != nil {
 		return nil, ErrNotFound
@@ -153,10 +142,10 @@ func (storage *CookieStorage) decode(id string) (cookiePayload, error) {
 	return payload, nil
 }
 
-func (storage *CookieStorage) Set(string, map[string]any, time.Duration) error {
+func (storage *CookieStorage) Set(context.Context, string, map[string]any, time.Duration) error {
 	return errors.New("cookie session storage must be persisted through Session")
 }
-func (storage *CookieStorage) Delete(id string) error {
+func (storage *CookieStorage) Delete(_ context.Context, id string) error {
 	payload, err := storage.decode(id)
 	if err != nil {
 		return nil
@@ -319,93 +308,6 @@ func (storage *CookieStorage) sign(value []byte) []byte {
 	hasher := hmac.New(sha256.New, storage.secret)
 	_, _ = hasher.Write(value)
 	return hasher.Sum(nil)
-}
-
-// RedisStorage stores JSON session values in Redis with native TTL.
-type RedisStorage struct {
-	client      redis.UniversalClient
-	prefix      string
-	closeClient bool
-	closeOnce   sync.Once
-	closeErr    error
-}
-
-func NewRedisStorage(client redis.UniversalClient, prefix string) *RedisStorage {
-	return newRedisStorage(client, prefix, false)
-}
-
-// NewOwnedRedisStorage creates a Redis store that closes its client from
-// Flush. It is intended for framework-created clients; callers that inject a
-// shared client should use NewRedisStorage.
-func NewOwnedRedisStorage(client redis.UniversalClient, prefix string) *RedisStorage {
-	return newRedisStorage(client, prefix, true)
-}
-
-func newRedisStorage(client redis.UniversalClient, prefix string, closeClient bool) *RedisStorage {
-	if strings.TrimSpace(prefix) == "" {
-		prefix = "web:session:"
-	}
-	return &RedisStorage{client: client, prefix: prefix, closeClient: closeClient}
-}
-
-func (storage *RedisStorage) key(id string) string { return storage.prefix + id }
-
-func (storage *RedisStorage) Get(id string) (map[string]any, error) {
-	return storage.GetContext(context.Background(), id)
-}
-
-// GetContext reads session values with the caller's context.
-func (storage *RedisStorage) GetContext(ctx context.Context, id string) (map[string]any, error) {
-	if storage == nil || storage.client == nil {
-		return nil, errors.New("redis session client is not configured")
-	}
-	value, err := storage.client.Get(ctx, storage.key(id)).Result()
-	if errors.Is(err, redis.Nil) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	values := make(map[string]any)
-	if err := json.Unmarshal([]byte(value), &values); err != nil {
-		return nil, err
-	}
-	return values, nil
-}
-
-func (storage *RedisStorage) Set(id string, values map[string]any, ttl time.Duration) error {
-	return storage.SetContext(context.Background(), id, values, ttl)
-}
-
-// SetContext writes session values with the caller's context.
-func (storage *RedisStorage) SetContext(ctx context.Context, id string, values map[string]any, ttl time.Duration) error {
-	if storage == nil || storage.client == nil {
-		return errors.New("redis session client is not configured")
-	}
-	value, err := json.Marshal(values)
-	if err != nil {
-		return err
-	}
-	return storage.client.Set(ctx, storage.key(id), value, ttl).Err()
-}
-
-func (storage *RedisStorage) Delete(id string) error {
-	return storage.DeleteContext(context.Background(), id)
-}
-
-// DeleteContext removes session values with the caller's context.
-func (storage *RedisStorage) DeleteContext(ctx context.Context, id string) error {
-	if storage == nil || storage.client == nil {
-		return errors.New("redis session client is not configured")
-	}
-	return storage.client.Del(ctx, storage.key(id)).Err()
-}
-func (storage *RedisStorage) Flush() error {
-	if storage == nil || storage.client == nil || !storage.closeClient {
-		return nil
-	}
-	storage.closeOnce.Do(func() { storage.closeErr = storage.client.Close() })
-	return storage.closeErr
 }
 
 func cloneValues(values map[string]any) map[string]any {

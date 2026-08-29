@@ -57,6 +57,15 @@ gx service
 Controller 动作实现和 Logic 由开发者维护。新增完整资源时可调用 `$gonex-create-resource`；参数设计、
 Controller、Service 和审查也有对应项目 skill。
 
+## 定时任务
+
+需要应用内定时工作时，通过 `server.Scheduler().Add(scheduler.Job{...})` 在启动组合根注册。任务使用
+`Cron`、`Every` 或 `Once`，必须命名并尊重传入的 `context.Context`；不要自行启动未跟踪的 goroutine。
+Server 会在监听前调用 `Start(ctx)`，关闭时先 `Stop()` 取消运行中任务，再在 HTTP drain 后 `Wait(ctx)`。
+`config.yaml` 可通过 `server.scheduler.enabled` 和 `server.scheduler.timezone` 配置本地调度器，但不声明
+业务 Handler。持久化任务、分布式锁、重试和
+业务队列仍属于应用基础设施，不由模板或 gx 生成。
+
 ## 验证
 
 ```bash

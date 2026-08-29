@@ -80,3 +80,14 @@ func TestNamedSliceResponseValue(t *testing.T) {
 		t.Fatalf("named slice response: status=%d body=%s", response.Code, response.Body.String())
 	}
 }
+
+func TestBackgroundSchedulerJobIsRegistered(t *testing.T) {
+	server := ghttp.NewServer()
+	if err := registerBackgroundJobs(server); err != nil {
+		t.Fatal(err)
+	}
+	jobs := server.Scheduler().Jobs()
+	if len(jobs) != 1 || jobs[0].Name != "basic-example-heartbeat" {
+		t.Fatalf("scheduler jobs = %#v", jobs)
+	}
+}

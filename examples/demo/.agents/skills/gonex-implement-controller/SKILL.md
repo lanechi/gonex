@@ -19,6 +19,9 @@ func (*ControllerV1) Action(
 ) (*v1.ActionRes, error)
 ```
 
+框架只扫描第二参数为请求结构体指针且请求嵌入有效 `g.Meta` 的导出方法；普通导出辅助方法会被忽略。
+如果方法声明了带 `g.Meta` 的请求类型但签名不正确，注册时必须修正错误，不能依赖扫描器静默跳过。
+
 - 接收已绑定、已校验的 `req`；不要重复解析 path/query/JSON。
 - 映射为领域输入，调用 `service.<Module>()`，再映射为公开响应。
 - 透传 `context.Context`，不要替换成 `context.Background()`。

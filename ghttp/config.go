@@ -9,7 +9,6 @@ import (
 
 	"github.com/lanechi/gonex/logging"
 	"github.com/lanechi/gonex/session"
-	"github.com/redis/go-redis/v9"
 )
 
 // Config is the configuration contract used by Server.
@@ -30,7 +29,7 @@ func (server *Server) applyLoggerConfig() {
 		"logger.enabled", "logger.show", "server.log.enabled", "server.log.show",
 	); ok && !enabled {
 		server.logger = logging.NewNopLogger()
-	} else if !server.loggerSet {
+	} else if !server.options.Logger.Set {
 		if logger, err := logging.NewConfiguredLoggerFromConfig(server.config); err != nil {
 			server.addInitializationError(fmt.Errorf("configure logger: %w", err))
 		} else if logger != nil {
@@ -44,49 +43,62 @@ func (server *Server) applyConfig() {
 		return
 	}
 	get := server.config.Get
-	if !server.addressSet {
+	if !server.options.Address.Set {
 		if value := configString(get("server.address")); value != "" && value != "<nil>" {
 			server.address = value
 		}
 	}
-	if !server.readTimeoutSet {
+	if !server.options.ReadTimeout.Set {
 		if value, ok := configDuration(get("server.readTimeout")); ok {
 			server.readTimeout = value
 		}
 	}
-	if !server.writeTimeoutSet {
+	if !server.options.WriteTimeout.Set {
 		if value, ok := configDuration(get("server.writeTimeout")); ok {
 			server.writeTimeout = value
 		}
 	}
-	if !server.idleTimeoutSet {
+	if !server.options.IdleTimeout.Set {
 		if value, ok := configDuration(get("server.idleTimeout")); ok {
 			server.idleTimeout = value
 		}
 	}
-	if !server.bodyLimitSet {
+	if !server.options.BodyLimit.Set {
 		if value, ok := configInt(get("server.maxBodyBytes")); ok && value > 0 {
 			server.maxBodyBytes = value
 		}
 	}
-	if !server.multipartLimitSet {
+	if !server.options.MultipartLimit.Set {
 		if value, ok := configInt(get("server.maxMultipartMemory")); ok && value > 0 {
 			server.maxMultipartMemory = value
 		}
 	}
-	if !server.headerLimitSet {
+	if !server.options.HeaderLimit.Set {
 		if value, ok := configInt(get("server.maxHeaderBytes")); ok && value > 0 && value <= math.MaxInt {
 			server.maxHeaderBytes = int(value)
 		} else if ok && value > math.MaxInt {
 			server.addInitializationError(fmt.Errorf("server.maxHeaderBytes exceeds platform int range"))
 		}
 	}
-	if !server.shutdownSet {
+	if !server.options.ShutdownTimeout.Set {
 		if value, ok := configDuration(get("server.shutdownTimeout")); ok {
 			server.shutdownTimeout = value
 		}
 	}
-	if !server.tlsSet {
+	if !server.options.Scheduler.Set {
+		if enabled, ok := configBool(get("server.scheduler.enabled")); ok {
+			server.schedulerEnabled = enabled
+		}
+		if timezone := configString(get("server.scheduler.timezone")); timezone != "" && timezone != "<nil>" {
+			location, err := time.LoadLocation(timezone)
+			if err != nil {
+				server.addInitializationError(fmt.Errorf("configure scheduler timezone: %w", err))
+			} else {
+				server.schedulerLocation = location
+			}
+		}
+	}
+	if !server.options.TLS.Set {
 		server.tlsCertFile = configString(get("server.tls.cert"))
 		server.tlsKeyFile = configString(get("server.tls.key"))
 		if enabled, ok := configBool(get("server.tls.enabled")); ok {
@@ -95,29 +107,29 @@ func (server *Server) applyConfig() {
 			server.tlsEnabled = server.tlsCertFile != "" && server.tlsKeyFile != ""
 		}
 	}
-	if !server.openapiSet {
+	if !server.options.OpenAPI.Set {
 		if enabled, ok := configBool(get("server.openapi.enabled")); ok {
 			server.openapiEnabled = enabled
 		}
 	}
-	if !server.openapiPathSet {
+	if !server.options.OpenAPIPath.Set {
 		if path := configString(get("server.openapi.path")); path != "" && path != "<nil>" {
 			server.openapiPath = path
 		}
 	}
-	if !server.swaggerPathSet {
+	if !server.options.SwaggerPath.Set {
 		if path := configString(get("server.swagger.path")); path != "" && path != "<nil>" {
 			server.swaggerPath = path
 		}
 	}
-	if !server.templateRootSet {
+	if !server.options.TemplateRoot.Set {
 		if root := configString(get("server.template.root")); root != "" && root != "<nil>" {
 			if err := server.templates.SetRoot(root); err != nil {
 				server.addInitializationError(fmt.Errorf("configure template root: %w", err))
 			}
 		}
 	}
-	if !server.corsSet {
+	if !server.options.CORS.Set {
 		if enabled, ok := configBool(get("cors.enabled")); ok && enabled {
 			options := CORSOptions{
 				Enabled:          true,
@@ -133,7 +145,7 @@ func (server *Server) applyConfig() {
 			server.corsOptions = &options
 		}
 	}
-	if !server.sessionSet {
+	if !server.options.Session.Set {
 		if enabled, ok := configBool(get("session.enabled")); ok && !enabled {
 			server.sessionManager = nil
 		} else {
@@ -157,18 +169,6 @@ func (server *Server) applyConfig() {
 				} else {
 					server.addInitializationError(fmt.Errorf("session cookie storage requires session.storage.secret"))
 				}
-			case "redis":
-				address := configString(get("session.storage.address"))
-				if address == "" || address == "<nil>" {
-					address = "127.0.0.1:6379"
-				}
-				client := redis.NewClient(&redis.Options{
-					Addr:     address,
-					Username: configString(get("session.storage.username")),
-					Password: configString(get("session.storage.password")),
-					DB:       int(configIntValue(get("session.storage.db"))),
-				})
-				storage = session.NewOwnedRedisStorage(client, configString(get("session.storage.prefix")))
 			default:
 				server.addInitializationError(fmt.Errorf("unsupported session.storage.type %q", storageType))
 			}
@@ -208,10 +208,10 @@ func (server *Server) applyConfig() {
 			server.addInitializationError(fmt.Errorf("configure trusted proxies: %w", err))
 		}
 	}
-	if !server.allowedHostsSet {
+	if !server.options.AllowedHosts.Set {
 		server.allowedHosts = configStrings(get("server.allowedHosts"))
 	}
-	if !server.csrfSet {
+	if !server.options.CSRF.Set {
 		if enabled, ok := configBool(get("csrf.enabled")); ok && enabled {
 			options := CSRFOptions{
 				Enabled:    true,

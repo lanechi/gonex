@@ -42,9 +42,10 @@ gonex 是基于 Gin 的轻量 Go Web 框架。核心关注 HTTP Server、声明�
 | `logging/` | 与实现解耦的结构化 Logger；Zap 是内置实现 |
 | `middleware/` | Request ID、请求体限制、Host、CORS、CSRF 等底层 Middleware |
 | `openapi/` | OpenAPI 文档模型、Schema 生成和 Swagger HTML |
-| `session/`、`cookie/` | Session 契约与内存、签名 Cookie、Redis 存储 |
+| `session/`、`cookie/` | context-first Session 契约与内存、签名 Cookie；Redis client 由业务持有，`contrib/redislog` 只适配 Redis 诊断日志 |
 | `template/`、`static/` | 模板管理和安全的静态资源挂载 |
 | `lifecycle/` | 启停 Hook、后台任务跟踪与优雅退出 |
+| `scheduler/` | 独立的本地定时任务契约；ghttp 托管 Start/Stop/Wait，不泄漏调度引擎类型 |
 | `contrib/` | 可选集成适配器，不得反向污染核心抽象 |
 | `test/` | 面向外部使用方式的框架集成、隔离、安全和回归测试 |
 | `gx/` | 独立 module；`gx` CLI 和生成器实现 |

@@ -10,16 +10,23 @@ import (
 
 // RouteMetadata is the normalized metadata extracted from a request type.
 type RouteMetadata struct {
-	Path        string
-	Method      string
-	Tags        []string
-	Summary     string
-	Description string
-	OperationID string
-	Deprecated  bool
-	Security    []string
-	Produces    []string
-	Consumes    []string
+	Path           string
+	Method         string
+	ControllerName string
+	Action         string
+	RequestType    reflect.Type
+	ResponseType   reflect.Type
+	Tags           []string
+	Summary        string
+	Description    string
+	OperationID    string
+	Deprecated     bool
+	Security       []string
+	Produces       []string
+	Consumes       []string
+	// Bindings is the immutable binding contract used by documentation and
+	// route inspection. It deliberately contains no executable Binder state.
+	Bindings []FieldBinding
 }
 
 // ParseMeta extracts route metadata from a pointer-to-struct request type.

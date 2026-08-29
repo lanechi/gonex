@@ -88,12 +88,12 @@ func TestCookieSessionStorageAndSessionLifecycle(t *testing.T) {
 	if cookie.Name != "sid" {
 		t.Fatalf("signed session cookie=%#v", cookie)
 	}
-	values, err := storage.Get(cookie.Value)
+	values, err := storage.Get(context.Background(), cookie.Value)
 	if err != nil || values["value"] != "stored" {
 		t.Fatalf("signed session round trip: values=%#v err=%v", values, err)
 	}
 	tampered := "x" + cookie.Value[1:]
-	if _, err := storage.Get(tampered); err != ghttp.ErrSessionNotFound {
+	if _, err := storage.Get(context.Background(), tampered); err != session.ErrNotFound {
 		t.Fatalf("tampered cookie error=%v", err)
 	}
 }
@@ -125,24 +125,5 @@ func TestLifecycleHooksAndTrackedTasks(t *testing.T) {
 	}
 	if strings.Join(events, ",") != "start,started,shutdown,stop" {
 		t.Fatalf("lifecycle events=%v", events)
-	}
-}
-
-func TestRedisSessionStorageRequiresClient(t *testing.T) {
-	storage := session.NewRedisStorage(nil, "")
-	if _, err := storage.Get("id"); err == nil {
-		t.Fatal("Redis Get accepted a nil client")
-	}
-	if err := storage.Set("id", map[string]any{"value": true}, time.Minute); err == nil {
-		t.Fatal("Redis Set accepted a nil client")
-	}
-	if err := storage.Delete("id"); err == nil {
-		t.Fatal("Redis Delete accepted a nil client")
-	}
-	if err := storage.Flush(); err != nil {
-		t.Fatal(err)
-	}
-	if err := session.NewOwnedRedisStorage(nil, "custom:").Flush(); err != nil {
-		t.Fatal(err)
 	}
 }

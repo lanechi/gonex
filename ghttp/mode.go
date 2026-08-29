@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/lanechi/gonex/ghttp/internal/ginruntime"
 )
 
 // Gin mode values supported by the framework.
@@ -19,7 +20,7 @@ const (
 func WithMode(mode string) Option {
 	return func(server *Server) {
 		server.mode = strings.TrimSpace(mode)
-		server.modeSet = true
+		server.options.Mode = Optional[string]{Value: mode, Set: true}
 	}
 }
 
@@ -42,7 +43,7 @@ func (server *Server) IsDebug() bool {
 
 func (server *Server) applyModeConfig() {
 	mode := server.mode
-	if !server.modeSet && server.config != nil {
+	if !server.options.Mode.Set && server.config != nil {
 		mode = configString(server.config.Get("server.mode"))
 	}
 	normalized, err := normalizeGinMode(mode)
@@ -70,7 +71,5 @@ func normalizeGinMode(mode string) (string, error) {
 }
 
 func setGinMode(mode string) {
-	ginRouteRegistrationMu.Lock()
-	defer ginRouteRegistrationMu.Unlock()
-	gin.SetMode(mode)
+	ginruntime.SetMode(mode)
 }

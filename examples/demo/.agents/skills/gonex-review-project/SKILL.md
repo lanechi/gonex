@@ -33,3 +33,4 @@ description: 审查 gonex 项目的 API、Controller、Logic、Service、生成�
 - 直接写响应后不会再返回触发统一编码的值或错误。
 - 生成命令先 dry-run；`--clean` 和 `dao` 的破坏范围经过确认。
 - 行为变更有测试、README；框架变更还同步 `gx` 和至少一个可运行 example。
+- 定时工作通过 `Server.Scheduler()` 注册，具备唯一名称、可取消 Context、明确超时和重入策略；不得以未跟踪 goroutine 替代 Server 生命周期托管。审查 `server.scheduler.enabled/timezone`，并确认停止顺序为 Stop 取消、HTTP drain、Wait，不在 `OnShutdown` 阻塞等待。

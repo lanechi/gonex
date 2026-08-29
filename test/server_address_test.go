@@ -13,7 +13,7 @@ import (
 func TestRunAcceptsAddressOverride(t *testing.T) {
 	server := ghttp.NewServer(
 		ghttp.WithLogger(logging.NewNopLogger()),
-		ghttp.WithOpenAPI(false),
+		ghttp.WithOpenAPI(ghttp.OpenAPIOptions{}),
 	)
 	started := make(chan struct{})
 	server.OnStarted(func(_ context.Context) error {

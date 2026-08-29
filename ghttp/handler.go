@@ -19,23 +19,25 @@ type Response struct {
 
 func (server *Server) handlerFor(route router.Definition) gin.HandlerFunc {
 	return func(ginContext *gin.Context) {
+		runtime := route.Runtime
+		requestType := route.Metadata.RequestType
 		frameworkContext := newContext(ginContext)
 		frameworkContext.server = server
 		frameworkContext.sessionManager = server.sessionManager
 		frameworkContext.templateManager = server.templates
 		frameworkContext.logger = requestLoggerFromGin(server, ginContext)
 		requestContext := context.WithValue(ginContext.Request.Context(), contextKey{}, frameworkContext)
-		requestValue := reflect.New(route.RequestType.Elem())
-		if err := route.Binder.Bind(ginContext, requestValue.Interface()); err != nil {
+		requestValue := reflect.New(requestType.Elem())
+		if err := runtime.Binder.Bind(ginContext, requestValue.Interface()); err != nil {
 			server.handleError(frameworkContext, frameworkError(err))
 			return
 		}
-		if err := server.validateRequest(requestValue.Interface(), route.Binder.HasBindingRules(), route.Binder.HasValidateRules()); err != nil {
+		if err := server.validateRequest(requestValue.Interface(), runtime.Binder.HasBindingRules(), runtime.Binder.HasValidateRules()); err != nil {
 			server.handleError(frameworkContext, err)
 			return
 		}
 
-		results := route.MethodValue.Call([]reflect.Value{
+		results := runtime.MethodValue.Call([]reflect.Value{
 			reflect.ValueOf(requestContext),
 			requestValue,
 		})

@@ -1,4 +1,4 @@
-package gen
+package controller
 
 import (
 	"fmt"
@@ -11,13 +11,15 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+
+	"github.com/lanechi/gonex/gx/internal/gen/shared"
 )
 
-func GenerateControllers(project Project, options ControllerOptions) (Result, error) {
+// Generate creates controller contracts and developer-owned implementation seeds.
+func Generate(project Project, options ControllerOptions) (Result, error) {
 	if strings.TrimSpace(options.Name) != "" {
 		return generateStandardControllers(project, options)
 	}
-	var result Result
 	if options.Source == "" {
 		options.Source = defaultAPISource
 	}
@@ -26,16 +28,26 @@ func GenerateControllers(project Project, options ControllerOptions) (Result, er
 	}
 	apis, err := scanAPIs(project, options.Source)
 	if err != nil {
-		return result, err
+		return Result{}, err
 	}
+	return Pipeline{}.Run(Discovery{Project: project, Options: options, APIs: apis})
+}
+
+func render(discovery Discovery) (Rendered, error) {
+	project, options, apis := discovery.Project, discovery.Options, discovery.APIs
+	rendered := Rendered{Discovery: discovery}
 	apiSources := make(map[string]struct{})
 	for _, api := range apis {
 		if _, exists := apiSources[api.Source]; exists {
 			continue
 		}
 		apiSources[api.Source] = struct{}{}
-		if err := transferLegacyDeveloperOwnership(project, &result, project.Resolve(api.Source), "API definition", options.DryRun); err != nil {
-			return result, err
+		output, err := legacyOwnershipOutput(project, api.Source, "API definition")
+		if err != nil {
+			return Rendered{}, err
+		}
+		if output != nil {
+			rendered.Outputs = append(rendered.Outputs, *output)
 		}
 	}
 	groups := make(map[string][]API)
@@ -67,28 +79,22 @@ func GenerateControllers(project Project, options ControllerOptions) (Result, er
 	sort.Strings(modules)
 	for _, module := range modules {
 		apiRootPath := filepath.Join(project.Resolve(options.Source), module, module+".go")
-		if err := writeForced(project, &result, apiRootPath, renderAPIContracts(moduleGroups[module], goPackageName(module), module), options.DryRun); err != nil {
-			return result, err
-		}
+		rendered.Outputs = append(rendered.Outputs, shared.Output{Path: apiRootPath, Content: renderAPIContracts(moduleGroups[module], goPackageName(module), module), Mode: shared.OutputForced})
 		packageName := goPackageName(module)
 		generatedPath := filepath.Join(project.Resolve(options.Destination), module, module+".go")
 		expectedGenerated[filepath.Clean(generatedPath)] = struct{}{}
 		source, err := renderControllerContracts(project, moduleGroups[module], packageName, module)
 		if err != nil {
-			return result, err
+			return Rendered{}, err
 		}
-		if err := writePlanned(project, &result, generatedPath, source, options.DryRun); err != nil {
-			return result, err
-		}
+		rendered.Outputs = append(rendered.Outputs, shared.Output{Path: generatedPath, Content: source, Mode: shared.OutputPlanned})
 		constructorPath := filepath.Join(project.Resolve(options.Destination), module, module+"_new.go")
 		expectedGenerated[filepath.Clean(constructorPath)] = struct{}{}
 		constructor, err := renderControllerConstructors(packageName, moduleGroups[module])
 		if err != nil {
-			return result, err
+			return Rendered{}, err
 		}
-		if err := writePlanned(project, &result, constructorPath, constructor, options.DryRun); err != nil {
-			return result, err
-		}
+		rendered.Outputs = append(rendered.Outputs, shared.Output{Path: constructorPath, Content: constructor, Mode: shared.OutputPlanned})
 	}
 	for _, key := range keys {
 		items := groups[key]
@@ -110,19 +116,60 @@ func GenerateControllers(project Project, options ControllerOptions) (Result, er
 			sourceAPIs := bySource[sourceName]
 			implementation, err := renderControllerMethods(sourceAPIs, packageName)
 			if err != nil {
-				return result, err
+				return Rendered{}, err
 			}
-			if err := writeDeveloperOwned(project, &result, implementationPath, implementation, "controller implementation", options.DryRun); err != nil {
-				return result, err
-			}
+			rendered.Outputs = append(rendered.Outputs, shared.Output{Path: implementationPath, Content: implementation, Mode: shared.OutputDeveloperOwned, Label: "controller implementation"})
 		}
 	}
 	if options.Clean {
-		if err := cleanStaleGeneratedContracts(project, options.Destination, expectedGenerated, &result, options.DryRun); err != nil {
-			return result, err
+		stale, err := staleControllerOutputs(project, options.Destination, expectedGenerated)
+		if err != nil {
+			return Rendered{}, err
 		}
+		rendered.Outputs = append(rendered.Outputs, stale...)
 	}
-	return result, nil
+	return rendered, nil
+}
+
+func staleControllerOutputs(project Project, destination string, expected map[string]struct{}) ([]shared.Output, error) {
+	root := project.Resolve(destination)
+	relativeRoot, err := filepath.Rel(project.Root, root)
+	if err != nil || relativeRoot == ".." || strings.HasPrefix(relativeRoot, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("--clean destination must be inside the project root: %s", destination)
+	}
+	var outputs []shared.Output
+	err = filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			if os.IsNotExist(walkErr) {
+				return nil
+			}
+			return walkErr
+		}
+		if info.IsDir() || !isControllerContractFilename(info.Name()) {
+			return nil
+		}
+		if _, exists := expected[filepath.Clean(path)]; exists {
+			return nil
+		}
+		outputs = append(outputs, shared.Output{Path: path, Mode: shared.OutputDelete})
+		return nil
+	})
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("scan stale generated files: %w", err)
+	}
+	return outputs, nil
+}
+
+func legacyOwnershipOutput(project Project, relative, label string) (*shared.Output, error) {
+	path := project.Resolve(relative)
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read developer-owned %s %s: %w", label, path, err)
+	}
+	if !generatedFile(content) {
+		return nil, nil
+	}
+	return &shared.Output{Path: path, Content: content, Mode: shared.OutputDeveloperOwned, Label: label}, nil
 }
 
 func renderControllerContract(project Project, apis []API, packageName, module, version string) ([]byte, error) {
@@ -266,13 +313,13 @@ func cleanStaleGeneratedContracts(project Project, destination string, expected 
 			return err
 		}
 		if dryRun {
-			result.add("DELETE", relative, "dry-run; gx-owned stale contract")
+			result.Add("DELETE", relative, "dry-run; gx-owned stale contract")
 			return nil
 		}
 		if err := os.Remove(path); err != nil {
 			return fmt.Errorf("delete stale generated file %s: %w", relative, err)
 		}
-		result.add("DELETE", relative, "gx-owned stale contract")
+		result.Add("DELETE", relative, "gx-owned stale contract")
 		return nil
 	})
 	if err != nil && !os.IsNotExist(err) {
