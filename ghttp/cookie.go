@@ -41,6 +41,9 @@ func (manager *CookieManager) prepare(name, value string, options CookieOptions)
 	if manager == nil || manager.context == nil || manager.context.gin == nil {
 		return nil, http.ErrNotSupported
 	}
+	if manager.context.gin.Writer.Written() {
+		return nil, fmt.Errorf("cannot set cookie %q after response headers were written", name)
+	}
 	responseCookie := &http.Cookie{
 		Name:     name,
 		Value:    value,
