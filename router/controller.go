@@ -72,7 +72,7 @@ func ScanController(controller any) ([]Definition, error) {
 		}
 		metadata.RequestType = requestType
 		metadata.ResponseType = responseType
-		metadata.Bindings = cloneFieldBindings(binder.Fields)
+		metadata.Bindings = cloneFieldBindings(binder.fields)
 		metadata.ControllerName = controllerName
 		metadata.Action = methodName
 		routes = append(routes, Definition{
