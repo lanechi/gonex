@@ -3,7 +3,6 @@ package ghttp
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -40,26 +39,24 @@ func NewSessionManager(storage session.Storage, cookieName string, ttl time.Dura
 	}
 }
 
-func validateSessionCookieOptions(options CookieOptions) error {
-	if options.SameSite == http.SameSiteNoneMode && !options.Secure {
-		return fmt.Errorf("session SameSite=None requires a Secure cookie")
+func secureSessionCookieOptions(options CookieOptions) CookieOptions {
+	if options.SameSite == http.SameSiteNoneMode {
+		options.Secure = true
 	}
-	return nil
+	return options
 }
 
 // SetCookieOptions replaces the flags used for the session identifier cookie.
-// SameSite=None is rejected unless Secure is also enabled.
-func (manager *SessionManager) SetCookieOptions(options CookieOptions) error {
+// SameSite=None always implies Secure so runtime mutation cannot weaken the
+// framework's session-cookie invariant.
+func (manager *SessionManager) SetCookieOptions(options CookieOptions) {
 	if manager == nil {
-		return errors.New("session manager is not configured")
+		return
 	}
-	if err := validateSessionCookieOptions(options); err != nil {
-		return err
-	}
+	options = secureSessionCookieOptions(options)
 	manager.cookieMu.Lock()
 	manager.cookieOptions = options
 	manager.cookieMu.Unlock()
-	return nil
 }
 
 // CookieOptions returns a copy of the session identifier cookie options.
@@ -153,7 +150,6 @@ func (manager *SessionManager) regenerate(current *managedSession) error {
 		current.family = cookieStorage.Family(id)
 		return cookieStorage.RevokeToken(oldID)
 	}
-
 	oldID := current.id
 	newID, err := session.NewID()
 	if err != nil {
