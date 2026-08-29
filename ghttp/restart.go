@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/lanechi/gonex/logging"
 )
 
 var ErrGracefulRestartUnsupported = errors.New("graceful restart requires a platform restart manager")
@@ -169,11 +171,34 @@ func (manager *serverRestartManager) restart(ctx context.Context) error {
 	// this irreversible handoff either: cancellation after ready must not leave
 	// both parent and child serving indefinitely, so cleanup switches to its own
 	// bounded background context.
+	go func() { _, _ = process.Wait() }()
+	if restartCalledFromServerRequest(ctx, manager.server) {
+		// A request handler cannot synchronously wait for Server.Shutdown: the
+		// HTTP server would in turn wait for that same handler to return. Start
+		// cleanup independently and let the request complete the handoff.
+		go manager.shutdownParentAfterHandoff()
+		return nil
+	}
 	shutdownContext, cancel := restartHandoffCleanupContext(manager.server.shutdownTimeout)
 	defer cancel()
-	shutdownErr := manager.server.Shutdown(shutdownContext)
-	go func() { _, _ = process.Wait() }()
-	return shutdownErr
+	return manager.server.Shutdown(shutdownContext)
+}
+
+func restartCalledFromServerRequest(ctx context.Context, server *Server) bool {
+	frameworkContext := FromContext(ctx)
+	return frameworkContext != nil && frameworkContext.server == server
+}
+
+func (manager *serverRestartManager) shutdownParentAfterHandoff() {
+	shutdownContext, cancel := restartHandoffCleanupContext(manager.server.shutdownTimeout)
+	defer cancel()
+	if err := manager.server.Shutdown(shutdownContext); err != nil {
+		manager.server.logger.Named("server").Error(
+			context.Background(),
+			"restart parent cleanup failed",
+			logging.Error(err),
+		)
+	}
 }
 
 func restartHandoffCleanupContext(timeout time.Duration) (context.Context, context.CancelFunc) {
