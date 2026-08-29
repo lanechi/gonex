@@ -163,11 +163,11 @@ func (server *Server) applyConfig() {
 				if secretValue == "" || secretValue == "<nil>" {
 					secretValue = configString(get("session.secret"))
 				}
-				secret := []byte(secretValue)
-				if len(secret) > 0 {
-					storage = session.NewCookieStorage(secret)
+				cookieStorage, err := session.NewCookieStorage([]byte(secretValue))
+				if err != nil {
+					server.addInitializationError(fmt.Errorf("configure cookie session storage: %w", err))
 				} else {
-					server.addInitializationError(fmt.Errorf("session cookie storage requires session.storage.secret"))
+					storage = cookieStorage
 				}
 			default:
 				server.addInitializationError(fmt.Errorf("unsupported session.storage.type %q", storageType))
