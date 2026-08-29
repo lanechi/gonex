@@ -15,8 +15,9 @@ type preparedDefinition struct {
 
 type undoOperation func() error
 
-// Sync validates the complete desired state before mutating the runtime
-// scheduler, then reconciles it with rollback on any failed operation.
+// Sync serializes the complete desired-state read, validation, and mutation so
+// an older Store.List snapshot cannot commit after a newer concurrent Sync.
+// The validated state is reconciled transactionally with rollback on failure.
 func (loader *Loader) Sync(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -24,6 +25,10 @@ func (loader *Loader) Sync(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+
+	loader.mu.Lock()
+	defer loader.mu.Unlock()
+
 	definitions, err := loader.store.List(ctx)
 	if err != nil {
 		return err
@@ -35,9 +40,6 @@ func (loader *Loader) Sync(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-
-	loader.mu.Lock()
-	defer loader.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
