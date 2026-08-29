@@ -3,6 +3,7 @@ package ghttp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -39,13 +40,26 @@ func NewSessionManager(storage session.Storage, cookieName string, ttl time.Dura
 	}
 }
 
-// SetCookieOptions replaces the flags used for the session identifier cookie.
-func (manager *SessionManager) SetCookieOptions(options CookieOptions) {
-	if manager != nil {
-		manager.cookieMu.Lock()
-		defer manager.cookieMu.Unlock()
-		manager.cookieOptions = options
+func validateSessionCookieOptions(options CookieOptions) error {
+	if options.SameSite == http.SameSiteNoneMode && !options.Secure {
+		return fmt.Errorf("session SameSite=None requires a Secure cookie")
 	}
+	return nil
+}
+
+// SetCookieOptions replaces the flags used for the session identifier cookie.
+// SameSite=None is rejected unless Secure is also enabled.
+func (manager *SessionManager) SetCookieOptions(options CookieOptions) error {
+	if manager == nil {
+		return errors.New("session manager is not configured")
+	}
+	if err := validateSessionCookieOptions(options); err != nil {
+		return err
+	}
+	manager.cookieMu.Lock()
+	manager.cookieOptions = options
+	manager.cookieMu.Unlock()
+	return nil
 }
 
 // CookieOptions returns a copy of the session identifier cookie options.
@@ -139,6 +153,7 @@ func (manager *SessionManager) regenerate(current *managedSession) error {
 		current.family = cookieStorage.Family(id)
 		return cookieStorage.RevokeToken(oldID)
 	}
+
 	oldID := current.id
 	newID, err := session.NewID()
 	if err != nil {
@@ -151,8 +166,13 @@ func (manager *SessionManager) regenerate(current *managedSession) error {
 		_ = manager.delete(current.context, newID)
 		return err
 	}
+	if err := manager.delete(current.context, oldID); err != nil {
+		cleanupErr := manager.delete(current.context, newID)
+		restoreErr := current.context.Cookie().Set(manager.cookieName, oldID, manager.CookieOptions())
+		return errors.Join(err, cleanupErr, restoreErr)
+	}
 	current.id = newID
-	return manager.delete(current.context, oldID)
+	return nil
 }
 
 func (manager *SessionManager) requestContext(ctx *Context) context.Context {
