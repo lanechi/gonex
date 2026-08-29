@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/mattn/go-isatty"
@@ -13,8 +14,15 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+type ownedOutput struct {
+	once   sync.Once
+	closer io.Closer
+	err    error
+}
+
 type zapLogger struct {
 	logger *zap.Logger
+	output *ownedOutput
 }
 
 func newZapLogger(configuration Config, supplied io.Writer) (Logger, error) {
@@ -35,11 +43,16 @@ func newZapLogger(configuration Config, supplied io.Writer) (Logger, error) {
 	}
 
 	writer := supplied
+	var output *ownedOutput
 	if writer == nil {
+		var closer io.Closer
 		var err error
-		writer, err = openOutput(configuration.Output)
+		writer, closer, err = openOutput(configuration.Output)
 		if err != nil {
 			return nil, err
+		}
+		if closer != nil {
+			output = &ownedOutput{closer: closer}
 		}
 	}
 
@@ -78,17 +91,21 @@ func newZapLogger(configuration Config, supplied io.Writer) (Logger, error) {
 	if configuration.Stacktrace {
 		options = append(options, zap.AddStacktrace(zapcore.ErrorLevel))
 	}
-	return &zapLogger{logger: zap.New(core, options...)}, nil
+	return &zapLogger{logger: zap.New(core, options...), output: output}, nil
 }
 
-func openOutput(output string) (io.Writer, error) {
+func openOutput(output string) (io.Writer, io.Closer, error) {
 	switch strings.ToLower(strings.TrimSpace(output)) {
 	case "", "stdout":
-		return os.Stdout, nil
+		return os.Stdout, nil, nil
 	case "stderr":
-		return os.Stderr, nil
+		return os.Stderr, nil, nil
 	default:
-		return os.OpenFile(output, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		file, err := os.OpenFile(output, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			return nil, nil, err
+		}
+		return file, file, nil
 	}
 }
 
@@ -125,11 +142,11 @@ func (logger *zapLogger) Error(_ context.Context, msg string, fields ...Field) {
 }
 
 func (logger *zapLogger) With(fields ...Field) Logger {
-	return &zapLogger{logger: logger.logger.With(toZapFields(fields)...)}
+	return &zapLogger{logger: logger.logger.With(toZapFields(fields)...), output: logger.output}
 }
 
 func (logger *zapLogger) Named(name string) Logger {
-	return &zapLogger{logger: logger.logger.Named(name)}
+	return &zapLogger{logger: logger.logger.Named(name), output: logger.output}
 }
 
 func (logger *zapLogger) Enabled(level Level) bool {
@@ -137,8 +154,26 @@ func (logger *zapLogger) Enabled(level Level) bool {
 }
 
 func (logger *zapLogger) Sync() error {
+	if logger == nil || logger.logger == nil {
+		return nil
+	}
 	if err := logger.logger.Sync(); err != nil && !errors.Is(err, syscall.EINVAL) {
 		return err
 	}
 	return nil
+}
+
+// Close synchronizes the logger and closes only file outputs opened by the
+// logging package. NewWithWriter never transfers writer ownership.
+func (logger *zapLogger) Close() error {
+	if logger == nil {
+		return nil
+	}
+	if logger.output == nil {
+		return logger.Sync()
+	}
+	logger.output.once.Do(func() {
+		logger.output.err = errors.Join(logger.Sync(), logger.output.closer.Close())
+	})
+	return logger.output.err
 }
