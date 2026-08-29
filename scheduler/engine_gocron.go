@@ -1,11 +1,29 @@
 package scheduler
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	"github.com/go-co-op/gocron/v2"
 )
+
+func (manager *manager) installLocked(record *jobRecord) error {
+	definition, err := scheduleDefinition(record.definition.Schedule)
+	if err != nil {
+		return err
+	}
+	options := []gocron.JobOption{gocron.WithName(record.definition.Name)}
+	if record.definition.RunImmediately {
+		options = append(options, gocron.WithStartAt(gocron.WithStartImmediately()))
+	}
+	innerJob, err := manager.inner.NewJob(definition, gocron.NewTask(func(ctx context.Context) { manager.run(record, ctx) }), options...)
+	if err != nil {
+		return fmt.Errorf("add scheduler job %q: %w", record.definition.Name, err)
+	}
+	record.inner = innerJob
+	return nil
+}
 
 func scheduleDefinition(schedule Schedule) (gocron.JobDefinition, error) {
 	switch value := schedule.(type) {

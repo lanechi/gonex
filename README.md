@@ -379,6 +379,10 @@ if err := server.Scheduler().Add(scheduler.Job{
 `server.Scheduler().Use(...)` 注册；`WithScheduler` 仅用于注入一个有意自定义的 Scheduler。注入后由该
 Server 独占其 Start/Stop/Wait 生命周期；调用方不得将同一实例注入多个 Server。
 
+### 持久化任务（实验性）
+
+`scheduler` 还提供数据库无关的 `JobDefinition`、`Store`、`HandlerRegistry` 和 `Loader`。Store 只读取定义，业务通过稳定名称注册 Handler；Loader 可用 `Sync` 或 `Run(ctx, interval)` 将 enabled 定义同步到本地 Scheduler。`Singleton` 任务可注入 `Locker`，执行结果可注入 `RunRecorder`。core 不包含 GORM、Redis 或其他数据库客户端。
+
 ## 多 Server 与生命周期
 
 命名 Server：

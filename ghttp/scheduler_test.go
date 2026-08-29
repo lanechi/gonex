@@ -9,6 +9,23 @@ import (
 	"github.com/lanechi/gonex/scheduler"
 )
 
+type nilScheduler struct{}
+
+func (*nilScheduler) Start(context.Context) error       { return nil }
+func (*nilScheduler) Stop()                             {}
+func (*nilScheduler) Wait(context.Context) error        { return nil }
+func (*nilScheduler) Add(scheduler.Job) error           { return nil }
+func (*nilScheduler) Remove(string) error               { return nil }
+func (*nilScheduler) Jobs() []scheduler.JobInfo         { return nil }
+func (*nilScheduler) Use(...scheduler.Middleware) error { return nil }
+
+func TestServerRejectsTypedNilScheduler(t *testing.T) {
+	var manager *nilScheduler
+	if err := NewServer(WithScheduler(manager)).Err(); err == nil {
+		t.Fatal("typed nil scheduler was accepted")
+	}
+}
+
 func TestServerOwnsIndependentSchedulers(t *testing.T) {
 	first := NewServer()
 	second := NewServer()

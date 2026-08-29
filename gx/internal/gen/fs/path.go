@@ -33,3 +33,8 @@ func safeProjectPath(root, relative string) (string, error) {
 	}
 	return path, nil
 }
+
+func pathOverlaps(left, right string) bool {
+	left, right = filepath.Clean(left), filepath.Clean(right)
+	return left == right || strings.HasPrefix(left, right+string(filepath.Separator)) || strings.HasPrefix(right, left+string(filepath.Separator))
+}

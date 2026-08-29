@@ -233,6 +233,10 @@ func TestManagerRecoversPanicsAndAppliesTimeout(t *testing.T) {
 	if !logger.contains("scheduler job panicked") {
 		t.Fatalf("panic was not logged: %#v", logger.messages())
 	}
+	deadline := time.Now().Add(time.Second)
+	for !logger.contains("scheduler job failed") && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
 	if !logger.contains("scheduler job failed") {
 		t.Fatalf("timeout was not logged: %#v", logger.messages())
 	}

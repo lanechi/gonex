@@ -28,13 +28,18 @@ func (transaction *Transaction) Delete(relative string) error {
 	if _, err := safeProjectPath(transaction.root, clean); err != nil {
 		return fmt.Errorf("transaction path %q: %w", relative, err)
 	}
-	if _, exists := transaction.writes[clean]; exists {
-		return fmt.Errorf("transaction path %q has already been written", relative)
-	}
 	for _, path := range transaction.deletes {
-		if path == clean {
-			return fmt.Errorf("transaction path %q has already been deleted", relative)
+		if pathOverlaps(path, clean) {
+			return fmt.Errorf("transaction path %q conflicts with delete %q", relative, path)
 		}
+	}
+	for path := range transaction.writes {
+		if pathOverlaps(path, clean) {
+			return fmt.Errorf("transaction path %q conflicts with write %q", relative, path)
+		}
+	}
+	if info, err := os.Stat(filepath.Join(transaction.root, clean)); err == nil && info.IsDir() {
+		return fmt.Errorf("transaction path %q is an existing directory", relative)
 	}
 	transaction.deletes = append(transaction.deletes, clean)
 	return nil
@@ -66,12 +71,14 @@ func (transaction *Transaction) Write(relative string, content []byte, permissio
 	if info, err := os.Stat(filepath.Join(transaction.root, clean)); err == nil && info.IsDir() {
 		return fmt.Errorf("transaction path %q is an existing directory", relative)
 	}
-	if _, exists := transaction.writes[clean]; exists {
-		return fmt.Errorf("transaction path %q has already been written", relative)
-	}
 	for _, path := range transaction.deletes {
-		if path == clean {
-			return fmt.Errorf("transaction path %q is both written and deleted", relative)
+		if pathOverlaps(path, clean) {
+			return fmt.Errorf("transaction path %q conflicts with delete %q", relative, path)
+		}
+	}
+	for path := range transaction.writes {
+		if pathOverlaps(path, clean) {
+			return fmt.Errorf("transaction path %q conflicts with write %q", relative, path)
 		}
 	}
 	path := filepath.Join(transaction.stage, clean)

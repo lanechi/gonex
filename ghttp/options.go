@@ -2,6 +2,7 @@ package ghttp
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -172,13 +173,26 @@ func WithLogger(logger logging.Logger) Option {
 // multiple Servers.
 func WithScheduler(manager scheduler.Scheduler) Option {
 	return func(server *Server) {
-		if manager == nil {
+		if isNilInterface(manager) {
 			server.addInitializationError(fmt.Errorf("scheduler must not be nil"))
 			return
 		}
 		server.scheduler = manager
 		server.schedulerEnabled = true
 		server.options.Scheduler = optional[SchedulerOptions]{Value: SchedulerOptions{Enabled: true}, Set: true}
+	}
+}
+
+func isNilInterface(value any) bool {
+	if value == nil {
+		return true
+	}
+	reflectValue := reflect.ValueOf(value)
+	switch reflectValue.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
+		return reflectValue.IsNil()
+	default:
+		return false
 	}
 }
 

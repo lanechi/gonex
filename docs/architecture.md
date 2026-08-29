@@ -257,7 +257,11 @@ Swagger 模板。Gin 的默认 Writer/Debug callback 也是上游包级状态：
 CSRF 使用 double-submit cookie、`SameSite=None` 必须配合 Secure、release/test 不暴露错误详情。
 改变这些默认值属于公共行为变更，必须有安全回归测试、当前 README 说明和 example 配置。
 
-## 10. 生命周期
+## 10. 持久化 Scheduler（实验性）
+
+持久化任务通过 `JobDefinition → Store → Loader → HandlerRegistry → Runtime Job` 进入本地 Scheduler。Store 只提供数据库无关的读取契约；Handler 必须由业务显式按稳定名称注册。`Singleton` 的跨实例执行由可选 `Locker` 适配器负责，执行历史由可选 `RunRecorder` 负责。Loader 支持一次同步和 polling，但不内置数据库、Redis、队列或分布式锁实现。
+
+## 11. 生命周期
 
 启动顺序为 `OnStart` → 创建/绑定 Listener → `OnStarted` → Serve。Scheduler 作为 `OnStart` Hook
 调用 `Start(ctx)`，因此 HTTP 开始接收请求前任务已具备调度能力。两组启动 Hook 都只在全部成功后提交各自
@@ -271,7 +275,7 @@ Session/Logger 和执行 `OnStop`。这避免长期任务等待阻塞 HTTP drain
 业务数据库、消息消费者等外部资源由应用创建，并通过 Hook 释放。框架不猜测资源所有权；注入的
 共享 client 默认不由框架关闭。
 
-## 11. 演进规则
+## 12. 演进规则
 
 每个框架行为变更都必须形成一条闭环：
 

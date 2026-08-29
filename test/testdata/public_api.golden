@@ -25,7 +25,7 @@ method github.com/lanechi/gonex/config.Config GetStringfunc(key string) string
 method github.com/lanechi/gonex/config.Config Getfunc(key string) any
 method github.com/lanechi/gonex/config.Config Unmarshalfunc(target any) error
 type Config interface{Get(key string) any; GetBool(key string) bool; GetInt(key string) int; GetString(key string) string; Unmarshal(target any) error}
-type ViperConfig struct{mu sync.RWMutex; viper *github.com/spf13/viper.Viper; root string; dotenv map[string]string; overrides map[string]any; loadErr error; file string}
+type ViperConfig struct{}
 PACKAGE github.com/lanechi/gonex/contrib/gormlog
 func Newfunc(logger github.com/lanechi/gonex/logging.Logger, options ...github.com/lanechi/gonex/contrib/gormlog.Option) gorm.io/gorm/logger.Interface
 func WithIgnoreRecordNotFoundErrorfunc(ignore bool) github.com/lanechi/gonex/contrib/gormlog.Option
@@ -38,12 +38,12 @@ method *github.com/lanechi/gonex/contrib/gormlog.Logger LogModefunc(level gorm.i
 method *github.com/lanechi/gonex/contrib/gormlog.Logger ParamsFilterfunc(_ context.Context, sql string, params ...interface{}) (string, []interface{})
 method *github.com/lanechi/gonex/contrib/gormlog.Logger Tracefunc(ctx context.Context, begin time.Time, fc func() (sql string, rowsAffected int64), err error)
 method *github.com/lanechi/gonex/contrib/gormlog.Logger Warnfunc(ctx context.Context, msg string, data ...interface{})
-type Logger struct{logger github.com/lanechi/gonex/logging.Logger; level gorm.io/gorm/logger.LogLevel; slowThreshold time.Duration; ignoreRecordNotFoundError bool; parameterizedQueries bool}
+type Logger struct{}
 type Option func(*github.com/lanechi/gonex/contrib/gormlog.Logger)
 PACKAGE github.com/lanechi/gonex/contrib/redislog
 func Newfunc(logger github.com/lanechi/gonex/logging.Logger) *github.com/lanechi/gonex/contrib/redislog.Logger
 method *github.com/lanechi/gonex/contrib/redislog.Logger Printffunc(ctx context.Context, format string, values ...interface{})
-type Logger struct{logger github.com/lanechi/gonex/logging.Logger}
+type Logger struct{}
 PACKAGE github.com/lanechi/gonex/cookie
 field Options.Domain string ""
 field Options.Expires time.Time ""
@@ -52,7 +52,7 @@ field Options.MaxAge int ""
 field Options.Path string ""
 field Options.SameSite net/http.SameSite ""
 field Options.Secure bool ""
-type Options struct{Path string; Domain string; MaxAge int; Expires time.Time; Secure bool; HTTPOnly bool; SameSite net/http.SameSite}
+type Options struct{}
 PACKAGE github.com/lanechi/gonex/g
 func Cfgfunc() *github.com/lanechi/gonex/config.ViperConfig
 func Ctxfunc(ctx context.Context) *github.com/lanechi/gonex/ghttp.Context
@@ -248,33 +248,33 @@ method github.com/lanechi/gonex/ghttp.DefaultResponseEncoder Encodefunc(ctx *git
 method github.com/lanechi/gonex/ghttp.ResponseEncoder Encodefunc(ctx *github.com/lanechi/gonex/ghttp.Context, data any) error
 method github.com/lanechi/gonex/ghttp.RestartManager Restartfunc(ctx context.Context) error
 method github.com/lanechi/gonex/ghttp.ValidationFieldError Stringfunc() string
-type CORSOptions struct{Enabled bool; AllowOrigins []string; AllowMethods []string; AllowHeaders []string; ExposeHeaders []string; AllowCredentials bool; MaxAge int}
-type CSRFOptions struct{Enabled bool; CookieName string; HeaderName string; Domain string; Secure bool; SameSite net/http.SameSite}
+type CORSOptions struct{}
+type CSRFOptions struct{}
 type Config interface{Get(key string) any; GetBool(key string) bool; GetInt(key string) int; GetString(key string) string; Unmarshal(target any) error}
-type Context struct{gin *github.com/gin-gonic/gin.Context; server *github.com/lanechi/gonex/ghttp.Server; sessionManager *github.com/lanechi/gonex/ghttp.SessionManager; templateManager *github.com/lanechi/gonex/template.Manager; logger github.com/lanechi/gonex/logging.Logger; wroteResponse bool; sessionMu sync.Mutex; session github.com/lanechi/gonex/session.Session}
-type CookieManager struct{context *github.com/lanechi/gonex/ghttp.Context}
-type CookieOptions struct{Path string; Domain string; MaxAge int; Expires time.Time; Secure bool; HTTPOnly bool; SameSite net/http.SameSite}
+type Context struct{}
+type CookieManager struct{}
+type CookieOptions struct{}
 type DefaultResponseEncoder struct{}
-type Error struct{Code int; HTTPStatus int; Message string; Cause error; Details any}
+type Error struct{}
 type ErrorHandler func(ctx *github.com/lanechi/gonex/ghttp.Context, err error)
 type LifecycleHook func(context.Context) error
 type Middleware func(*github.com/gin-gonic/gin.Context)
-type OpenAPIOptions struct{Enabled bool; DocumentPath string; SwaggerPath string}
+type OpenAPIOptions struct{}
 type Option func(*github.com/lanechi/gonex/ghttp.Server)
-type Response struct{Code int "json:\"code\""; Message string "json:\"message\""; Data any "json:\"data,omitempty\""; Details any "json:\"details,omitempty\""}
+type Response struct{}
 type ResponseEncoder interface{Encode(ctx *github.com/lanechi/gonex/ghttp.Context, data any) error}
 type RestartManager interface{Restart(ctx context.Context) error}
-type Route struct{server *github.com/lanechi/gonex/ghttp.Server; method string; path string}
-type RouterGroup struct{server *github.com/lanechi/gonex/ghttp.Server; prefix string; middleware []github.com/lanechi/gonex/ghttp.Middleware; err error}
-type SchedulerOptions struct{Enabled bool; Location *time.Location}
-type SecurityOptions struct{AllowedHosts []string; CORS github.com/lanechi/gonex/ghttp.CORSOptions; CSRF github.com/lanechi/gonex/ghttp.CSRFOptions}
-type Server struct{name string; address string; options github.com/lanechi/gonex/ghttp.serverOptions; github.com/lanechi/gonex/ghttp.routingState; github.com/lanechi/gonex/ghttp.docsState; github.com/lanechi/gonex/ghttp.securityState; github.com/lanechi/gonex/ghttp.runtimeState; responseEncoder github.com/lanechi/gonex/ghttp.ResponseEncoder; errorHandler github.com/lanechi/gonex/ghttp.ErrorHandler; bindingValidator *github.com/go-playground/validator/v10.Validate; validateValidator *github.com/go-playground/validator/v10.Validate; customBindingValidator bool; customValidateValidator bool; logger github.com/lanechi/gonex/logging.Logger; config github.com/lanechi/gonex/ghttp.Config; mode string; debug bool; templates *github.com/lanechi/gonex/template.Manager; readTimeout time.Duration; writeTimeout time.Duration; idleTimeout time.Duration; maxBodyBytes int64; maxMultipartMemory int64; maxHeaderBytes int; shutdownTimeout time.Duration; tlsEnabled bool; tlsCertFile string; tlsKeyFile string; requestIDEnabled bool}
-type SessionManager struct{storage github.com/lanechi/gonex/session.Storage; cookieName string; ttl time.Duration; cookieMu sync.RWMutex; cookieOptions github.com/lanechi/gonex/ghttp.CookieOptions}
-type SessionOptions struct{Manager *github.com/lanechi/gonex/ghttp.SessionManager; CookieOptions *github.com/lanechi/gonex/ghttp.CookieOptions}
-type StaticOptions struct{CacheControl string; Index string; SPAFallback bool; Extensions []string}
-type TLSOptions struct{Enabled bool; CertFile string; KeyFile string}
-type TimeoutOptions struct{Read time.Duration; Write time.Duration; Idle time.Duration; Shutdown time.Duration}
-type ValidationFieldError struct{Field string "json:\"field\""; Tag string "json:\"tag\""; Param string "json:\"param,omitempty\""}
+type Route struct{}
+type RouterGroup struct{}
+type SchedulerOptions struct{}
+type SecurityOptions struct{}
+type Server struct{}
+type SessionManager struct{}
+type SessionOptions struct{}
+type StaticOptions struct{}
+type TLSOptions struct{}
+type TimeoutOptions struct{}
+type ValidationFieldError struct{}
 var ErrGracefulRestartUnsupported error
 var ErrServerNotRunning error
 var ErrServerRunning error
@@ -292,7 +292,7 @@ method *github.com/lanechi/gonex/lifecycle.Lifecycle Startfunc(ctx context.Conte
 method *github.com/lanechi/gonex/lifecycle.Lifecycle Stopfunc(ctx context.Context) error
 method *github.com/lanechi/gonex/lifecycle.Lifecycle Waitfunc(ctx context.Context) error
 type Hook func(context.Context) error
-type Lifecycle struct{mu sync.Mutex; onStart []github.com/lanechi/gonex/lifecycle.Hook; onStarted []github.com/lanechi/gonex/lifecycle.Hook; onShutdown []github.com/lanechi/gonex/lifecycle.Hook; onStop []github.com/lanechi/gonex/lifecycle.Hook; startHooksRun bool; startRunning bool; startAttempt *github.com/lanechi/gonex/lifecycle.phaseAttempt; started bool; starting bool; startedAttempt *github.com/lanechi/gonex/lifecycle.phaseAttempt; shutdown bool; shutdownOnce bool; tasks sync.WaitGroup; taskContext context.Context; cancelTasks context.CancelFunc}
+type Lifecycle struct{}
 PACKAGE github.com/lanechi/gonex/logging
 const ColorAlways github.com/lanechi/gonex/logging.ColorMode = "always"
 const ColorAuto github.com/lanechi/gonex/logging.ColorMode = "auto"
@@ -347,9 +347,9 @@ method github.com/lanechi/gonex/logging.Logger Syncfunc() error
 method github.com/lanechi/gonex/logging.Logger Warnfunc(ctx context.Context, msg string, fields ...github.com/lanechi/gonex/logging.Field)
 method github.com/lanechi/gonex/logging.Logger Withfunc(fields ...github.com/lanechi/gonex/logging.Field) github.com/lanechi/gonex/logging.Logger
 type ColorMode string
-type Config struct{Level github.com/lanechi/gonex/logging.Level; Format github.com/lanechi/gonex/logging.Format; Output string; Color github.com/lanechi/gonex/logging.ColorMode; Caller bool; Stacktrace bool}
+type Config struct{}
 type ConfigSource interface{Get(key string) any}
-type Field struct{Key string; Value any}
+type Field struct{}
 type Format string
 type Level int8
 type Logger interface{Debug(ctx context.Context, msg string, fields ...github.com/lanechi/gonex/logging.Field); Enabled(level github.com/lanechi/gonex/logging.Level) bool; Error(ctx context.Context, msg string, fields ...github.com/lanechi/gonex/logging.Field); Info(ctx context.Context, msg string, fields ...github.com/lanechi/gonex/logging.Field); Named(name string) github.com/lanechi/gonex/logging.Logger; Sync() error; Warn(ctx context.Context, msg string, fields ...github.com/lanechi/gonex/logging.Field); With(fields ...github.com/lanechi/gonex/logging.Field) github.com/lanechi/gonex/logging.Logger}
@@ -376,8 +376,8 @@ func NewRequestIDfunc() string
 func NewSecureTokenfunc() (string, error)
 func RequestIDFromGinfunc(context *github.com/gin-gonic/gin.Context) string
 func RequestIDfunc() github.com/gin-gonic/gin.HandlerFunc
-type CORSOptions struct{Enabled bool; AllowOrigins []string; AllowMethods []string; AllowHeaders []string; ExposeHeaders []string; AllowCredentials bool; MaxAge int}
-type CSRFOptions struct{Enabled bool; CookieName string; HeaderName string; Domain string; Secure bool; SameSite net/http.SameSite}
+type CORSOptions struct{}
+type CSRFOptions struct{}
 PACKAGE github.com/lanechi/gonex/openapi
 field Document.Components map[string]any "json:\"components,omitempty\""
 field Document.Info github.com/lanechi/gonex/openapi.Info "json:\"info\""
@@ -399,9 +399,9 @@ func Generatefunc(name string, routes []github.com/lanechi/gonex/router.RouteMet
 func Pathfunc(path string) string
 func RenderSwaggerHTMLfunc(specURL string) []byte
 func SetSwaggerTemplatefunc(template string)
-type Document struct{OpenAPI string "json:\"openapi\""; Info github.com/lanechi/gonex/openapi.Info "json:\"info\""; Paths map[string]map[string]github.com/lanechi/gonex/openapi.Operation "json:\"paths\""; Components map[string]any "json:\"components,omitempty\""}
-type Info struct{Title string "json:\"title\""; Version string "json:\"version\""}
-type Operation struct{Tags []string "json:\"tags,omitempty\""; Summary string "json:\"summary,omitempty\""; Description string "json:\"description,omitempty\""; OperationID string "json:\"operationId,omitempty\""; Deprecated bool "json:\"deprecated,omitempty\""; Security []map[string][]string "json:\"security,omitempty\""; Parameters []map[string]any "json:\"parameters,omitempty\""; RequestBody map[string]any "json:\"requestBody,omitempty\""; Responses map[string]any "json:\"responses\""}
+type Document struct{}
+type Info struct{}
+type Operation struct{}
 PACKAGE github.com/lanechi/gonex/router
 field Binder.Fields []github.com/lanechi/gonex/router.FieldBinding ""
 field Binder.MaxMultipartMemory int64 ""
@@ -451,14 +451,14 @@ method *github.com/lanechi/gonex/router.Registry Listfunc() []github.com/lanechi
 method *github.com/lanechi/gonex/router.Registry Registerfunc(routes ...github.com/lanechi/gonex/router.RouteMetadata) error
 method *github.com/lanechi/gonex/router.Registry RouteTablefunc(writer io.Writer) error
 method *github.com/lanechi/gonex/router.Registry Validatefunc(routes ...github.com/lanechi/gonex/router.RouteMetadata) error
-type Binder struct{Fields []github.com/lanechi/gonex/router.FieldBinding; MaxMultipartMemory int64; hasQuery bool; hasBindingRules bool; hasValidateRules bool}
-type BindingError struct{Code int; HTTPStatus int; Message string; Cause error}
-type Definition struct{Metadata github.com/lanechi/gonex/router.RouteMetadata; Runtime github.com/lanechi/gonex/router.RouteRuntime}
-type FieldBinding struct{Index []int; Path string; Query string; Header string; Cookie string; Form string; Default string; HasDefault bool; File string}
+type Binder struct{}
+type BindingError struct{}
+type Definition struct{}
+type FieldBinding struct{}
 type Meta struct{}
-type Registry struct{mu sync.RWMutex; routes []github.com/lanechi/gonex/router.RouteMetadata; keys map[string]struct{}}
-type RouteMetadata struct{Path string; Method string; ControllerName string; Action string; RequestType reflect.Type; ResponseType reflect.Type; Tags []string; Summary string; Description string; OperationID string; Deprecated bool; Security []string; Produces []string; Consumes []string; Bindings []github.com/lanechi/gonex/router.FieldBinding}
-type RouteRuntime struct{MethodValue reflect.Value; Binder *github.com/lanechi/gonex/router.Binder}
+type Registry struct{}
+type RouteMetadata struct{}
+type RouteRuntime struct{}
 PACKAGE github.com/lanechi/gonex/scheduler
 const AllowOverlap github.com/lanechi/gonex/scheduler.OverlapPolicy = 1
 const EveryInstance github.com/lanechi/gonex/scheduler.ExecutionMode = 1
@@ -501,15 +501,20 @@ field RunRecord.Error string ""
 field RunRecord.FinishedAt time.Time ""
 field RunRecord.InstanceID string ""
 field RunRecord.JobID string ""
+field RunRecord.RunID string ""
 field RunRecord.ScheduledAt time.Time ""
 field RunRecord.StartedAt time.Time ""
 field RunRecord.Status github.com/lanechi/gonex/scheduler.RunStatus ""
 func MustNewfunc(options ...github.com/lanechi/gonex/scheduler.Option) github.com/lanechi/gonex/scheduler.Scheduler
 func NewHandlerRegistryfunc() github.com/lanechi/gonex/scheduler.HandlerRegistry
-func NewLoaderfunc(store github.com/lanechi/gonex/scheduler.Store, registry github.com/lanechi/gonex/scheduler.HandlerRegistry, scheduler github.com/lanechi/gonex/scheduler.Scheduler) (*github.com/lanechi/gonex/scheduler.Loader, error)
+func NewLoaderfunc(store github.com/lanechi/gonex/scheduler.Store, registry github.com/lanechi/gonex/scheduler.HandlerRegistry, scheduler github.com/lanechi/gonex/scheduler.Scheduler, options ...github.com/lanechi/gonex/scheduler.LoaderOption) (*github.com/lanechi/gonex/scheduler.Loader, error)
 func Newfunc(options ...github.com/lanechi/gonex/scheduler.Option) (github.com/lanechi/gonex/scheduler.Scheduler, error)
+func WithInstanceIDfunc(id string) github.com/lanechi/gonex/scheduler.LoaderOption
 func WithLocationfunc(location *time.Location) github.com/lanechi/gonex/scheduler.Option
+func WithLockerfunc(locker github.com/lanechi/gonex/scheduler.Locker) github.com/lanechi/gonex/scheduler.LoaderOption
 func WithLoggerfunc(logger github.com/lanechi/gonex/logging.Logger) github.com/lanechi/gonex/scheduler.Option
+func WithRunRecorderfunc(recorder github.com/lanechi/gonex/scheduler.RunRecorder) github.com/lanechi/gonex/scheduler.LoaderOption
+method *github.com/lanechi/gonex/scheduler.Loader Runfunc(ctx context.Context, interval time.Duration) error
 method *github.com/lanechi/gonex/scheduler.Loader Syncfunc(ctx context.Context) error
 method github.com/lanechi/gonex/scheduler.HandlerRegistry Getfunc(name string) (github.com/lanechi/gonex/scheduler.PersistentHandler, bool)
 method github.com/lanechi/gonex/scheduler.HandlerRegistry Registerfunc(name string, handler github.com/lanechi/gonex/scheduler.PersistentHandler) error
@@ -524,31 +529,31 @@ method github.com/lanechi/gonex/scheduler.Scheduler Startfunc(context.Context) e
 method github.com/lanechi/gonex/scheduler.Scheduler Stopfunc()
 method github.com/lanechi/gonex/scheduler.Scheduler Usefunc(...github.com/lanechi/gonex/scheduler.Middleware) error
 method github.com/lanechi/gonex/scheduler.Scheduler Waitfunc(context.Context) error
-method github.com/lanechi/gonex/scheduler.Store Getfunc(context.Context, string) (github.com/lanechi/gonex/scheduler.JobDefinition, error)
-method github.com/lanechi/gonex/scheduler.Store ListEnabledfunc(context.Context) ([]github.com/lanechi/gonex/scheduler.JobDefinition, error)
-type Cron struct{Expr string}
-type Every struct{Duration time.Duration}
-type Execution struct{Definition github.com/lanechi/gonex/scheduler.JobDefinition; Payload encoding/json.RawMessage}
+method github.com/lanechi/gonex/scheduler.Store Listfunc(context.Context) ([]github.com/lanechi/gonex/scheduler.JobDefinition, error)
+type Cron struct{}
+type Every struct{}
+type Execution struct{}
 type ExecutionMode uint8
 type Handler func(context.Context) error
 type HandlerRegistry interface{Get(name string) (github.com/lanechi/gonex/scheduler.PersistentHandler, bool); Register(name string, handler github.com/lanechi/gonex/scheduler.PersistentHandler) error}
-type Job struct{Name string; Schedule github.com/lanechi/gonex/scheduler.Schedule; Handler github.com/lanechi/gonex/scheduler.Handler; Timeout time.Duration; OverlapPolicy github.com/lanechi/gonex/scheduler.OverlapPolicy; RunImmediately bool; Middleware []github.com/lanechi/gonex/scheduler.Middleware}
-type JobDefinition struct{ID string; Name string; Handler string; Schedule github.com/lanechi/gonex/scheduler.Schedule; Payload encoding/json.RawMessage; Enabled bool; Version int64; Timeout time.Duration; OverlapPolicy github.com/lanechi/gonex/scheduler.OverlapPolicy; ExecutionMode github.com/lanechi/gonex/scheduler.ExecutionMode}
-type JobInfo struct{Name string; Schedule github.com/lanechi/gonex/scheduler.Schedule; NextRun time.Time; LastRun time.Time; Running bool}
-type Loader struct{store github.com/lanechi/gonex/scheduler.Store; registry github.com/lanechi/gonex/scheduler.HandlerRegistry; scheduler github.com/lanechi/gonex/scheduler.Scheduler; mu sync.Mutex; loaded map[string]github.com/lanechi/gonex/scheduler.loadedJob}
+type Job struct{}
+type JobDefinition struct{}
+type JobInfo struct{}
+type Loader struct{}
+type LoaderOption func(*github.com/lanechi/gonex/scheduler.Loader)
 type Lock interface{Unlock(context.Context) error}
 type Locker interface{TryLock(context.Context, string, time.Duration) (github.com/lanechi/gonex/scheduler.Lock, bool, error)}
 type Middleware func(github.com/lanechi/gonex/scheduler.Handler) github.com/lanechi/gonex/scheduler.Handler
-type Once struct{At time.Time}
+type Once struct{}
 type Option func(*github.com/lanechi/gonex/scheduler.managerOptions) error
 type OverlapPolicy uint8
 type PersistentHandler func(context.Context, github.com/lanechi/gonex/scheduler.Execution) error
-type RunRecord struct{JobID string; InstanceID string; ScheduledAt time.Time; StartedAt time.Time; FinishedAt time.Time; Status github.com/lanechi/gonex/scheduler.RunStatus; Error string; Duration time.Duration}
+type RunRecord struct{}
 type RunRecorder interface{Finish(context.Context, github.com/lanechi/gonex/scheduler.RunRecord) error; Start(context.Context, github.com/lanechi/gonex/scheduler.RunRecord) error}
 type RunStatus string
 type Schedule interface{isSchedule()}
 type Scheduler interface{Add(github.com/lanechi/gonex/scheduler.Job) error; Jobs() []github.com/lanechi/gonex/scheduler.JobInfo; Remove(name string) error; Start(context.Context) error; Stop(); Use(...github.com/lanechi/gonex/scheduler.Middleware) error; Wait(context.Context) error}
-type Store interface{Get(context.Context, string) (github.com/lanechi/gonex/scheduler.JobDefinition, error); ListEnabled(context.Context) ([]github.com/lanechi/gonex/scheduler.JobDefinition, error)}
+type Store interface{List(context.Context) ([]github.com/lanechi/gonex/scheduler.JobDefinition, error)}
 var ErrDuplicateJob error
 var ErrJobNotFound error
 var ErrStarted error
@@ -577,8 +582,8 @@ method github.com/lanechi/gonex/session.Session Setfunc(key string, value any) e
 method github.com/lanechi/gonex/session.Storage Deletefunc(ctx context.Context, id string) error
 method github.com/lanechi/gonex/session.Storage Getfunc(ctx context.Context, id string) (map[string]any, error)
 method github.com/lanechi/gonex/session.Storage Setfunc(ctx context.Context, id string, values map[string]any, ttl time.Duration) error
-type CookieStorage struct{secret []byte; mu sync.RWMutex; revoked map[[32]byte]int64; families map[[32]byte]int64; familyExpiries map[[32]byte]int64}
-type MemoryStorage struct{mu sync.RWMutex; entries map[string]github.com/lanechi/gonex/session.memorySessionEntry}
+type CookieStorage struct{}
+type MemoryStorage struct{}
 type Session interface{Clear() error; Delete(key string) error; Get(key string) (any, error); ID() string; Logout() error; Regenerate() error; Set(key string, value any) error}
 type Storage interface{Delete(ctx context.Context, id string) error; Get(ctx context.Context, id string) (map[string]any, error); Set(ctx context.Context, id string, values map[string]any, ttl time.Duration) error}
 var ErrNotFound error
@@ -590,7 +595,7 @@ field Options.SPAFallback bool ""
 func MountFSfunc(engine *github.com/gin-gonic/gin.Engine, relative string, filesystem io/fs.FS, options github.com/lanechi/gonex/static.Options) error
 func MountFilefunc(engine *github.com/gin-gonic/gin.Engine, relative string, filePath string, options github.com/lanechi/gonex/static.Options) error
 func Mountfunc(engine *github.com/gin-gonic/gin.Engine, relative string, root string, options github.com/lanechi/gonex/static.Options) error
-type Options struct{CacheControl string; Index string; SPAFallback bool; Extensions []string}
+type Options struct{}
 PACKAGE github.com/lanechi/gonex/template
 func Newfunc() *github.com/lanechi/gonex/template.Manager
 method *github.com/lanechi/gonex/template.Manager AddFuncfunc(name string, function any) error
@@ -599,4 +604,4 @@ method *github.com/lanechi/gonex/template.Manager Executefunc(writer io.Writer, 
 method *github.com/lanechi/gonex/template.Manager Invalidatefunc()
 method *github.com/lanechi/gonex/template.Manager Reloadfunc() error
 method *github.com/lanechi/gonex/template.Manager SetRootfunc(root string) error
-type Manager struct{mu sync.RWMutex; root string; functions html/template.FuncMap; templates *html/template.Template; watcher *github.com/fsnotify/fsnotify.Watcher; watchStop chan struct{}; watchDone chan struct{}}
+type Manager struct{}

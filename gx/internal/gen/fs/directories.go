@@ -42,8 +42,10 @@ func BeginDirectoryTransaction(root string, swaps ...DirectorySwap) (*DirectoryT
 		if _, err := safeProjectPath(root, target); err != nil {
 			return nil, fmt.Errorf("invalid directory swap %d: %w", index, err)
 		}
-		if _, exists := targets[target]; exists {
-			return nil, fmt.Errorf("duplicate directory target %q", swap.Target)
+		for existing := range targets {
+			if pathOverlaps(existing, target) {
+				return nil, fmt.Errorf("directory target %q overlaps %q", swap.Target, existing)
+			}
 		}
 		targets[target] = struct{}{}
 		if filepath.IsAbs(swap.Stage) {

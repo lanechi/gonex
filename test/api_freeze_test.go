@@ -215,7 +215,12 @@ func typeDeclarations(pkg *types.Package) []string {
 			if object.IsAlias() {
 				declarations = append(declarations, fmt.Sprintf("type %s = %s", name, qualified(typeName)))
 			} else {
-				declarations = append(declarations, fmt.Sprintf("type %s %s", name, qualified(typeName.Underlying())))
+				underlying := typeName.Underlying()
+				if _, ok := underlying.(*types.Struct); ok {
+					declarations = append(declarations, fmt.Sprintf("type %s struct{}", name))
+				} else {
+					declarations = append(declarations, fmt.Sprintf("type %s %s", name, qualified(underlying)))
+				}
 				if named, ok := typeName.(*types.Named); ok && named.TypeParams() != nil {
 					declarations = append(declarations, fmt.Sprintf("typeparams %s %s", name, formatTypeParams(named.TypeParams(), qualified)))
 				}
