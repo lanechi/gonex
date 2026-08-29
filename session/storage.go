@@ -11,14 +11,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 	"sync"
 	"time"
+
+	"github.com/lanechi/gonex/internal/sessionvalue"
 )
 
 var ErrNotFound = errors.New("session not found")
 
-// Session is the application-facing session contract.
+// Session is the application-facing session contract. Values must be JSON-safe;
+// implementations return detached values so callers cannot mutate session state
+// through shared maps, slices, pointers, or struct fields.
 type Session interface {
 	Get(key string) (any, error)
 	Set(key string, value any) error
@@ -30,8 +33,8 @@ type Session interface {
 }
 
 // Storage is the context-first persistence boundary for session
-// implementations. Implementations must not retain ctx after an operation
-// returns.
+// implementations. Implementations must not retain ctx or caller-owned value
+// references after an operation returns.
 type Storage interface {
 	Get(ctx context.Context, id string) (map[string]any, error)
 	Set(ctx context.Context, id string, values map[string]any, ttl time.Duration) error
@@ -63,11 +66,15 @@ func (storage *MemoryStorage) Get(_ context.Context, id string) (map[string]any,
 		}
 		return nil, ErrNotFound
 	}
-	return cloneValues(entry.values), nil
+	return sessionvalue.CloneMap(entry.values), nil
 }
 
 func (storage *MemoryStorage) Set(_ context.Context, id string, values map[string]any, ttl time.Duration) error {
-	entry := memorySessionEntry{values: cloneValues(values)}
+	normalized, err := sessionvalue.NormalizeMap(values)
+	if err != nil {
+		return err
+	}
+	entry := memorySessionEntry{values: normalized}
 	if ttl > 0 {
 		entry.expiresAt = time.Now().Add(ttl)
 	}
@@ -121,7 +128,7 @@ func (storage *CookieStorage) Get(_ context.Context, id string) (map[string]any,
 	if storage.isRevoked(id) || storage.isFamilyRevoked(payload.Family) {
 		return nil, ErrNotFound
 	}
-	return cloneValues(payload.Values), nil
+	return sessionvalue.CloneMap(payload.Values), nil
 }
 
 func (storage *CookieStorage) decode(id string) (cookiePayload, error) {
@@ -137,8 +144,11 @@ func (storage *CookieStorage) decode(id string) (cookiePayload, error) {
 		return cookiePayload{}, ErrNotFound
 	}
 	var payload cookiePayload
-	if err := json.Unmarshal(body, &payload); err != nil || (payload.ExpiresAt > 0 && time.Now().Unix() >= payload.ExpiresAt) {
+	if err := sessionvalue.Decode(body, &payload); err != nil || (payload.ExpiresAt > 0 && time.Now().Unix() >= payload.ExpiresAt) {
 		return cookiePayload{}, ErrNotFound
+	}
+	if payload.Values == nil {
+		payload.Values = make(map[string]any)
 	}
 	return payload, nil
 }
@@ -254,6 +264,10 @@ func (storage *CookieStorage) EncodeWithFamily(values map[string]any, ttl time.D
 	if storage == nil || len(storage.secret) == 0 {
 		return "", errors.New("cookie session secret is required")
 	}
+	normalized, err := sessionvalue.NormalizeMap(values)
+	if err != nil {
+		return "", err
+	}
 	nonce, err := NewID()
 	if err != nil {
 		return "", err
@@ -264,7 +278,7 @@ func (storage *CookieStorage) EncodeWithFamily(values map[string]any, ttl time.D
 			return "", err
 		}
 	}
-	payload := cookiePayload{Nonce: nonce, Family: family, Values: cloneValues(values)}
+	payload := cookiePayload{Nonce: nonce, Family: family, Values: normalized}
 	if ttl > 0 {
 		payload.ExpiresAt = time.Now().Add(ttl).Unix()
 	}
@@ -295,8 +309,8 @@ func cookieExpiry(payload cookiePayload) int64 {
 	return int64(^uint64(0) >> 1)
 }
 
-// Family returns the signed cookie's session family, or an empty string for a
-// legacy token that predates session families.
+// Family returns the signed cookie's session family, or an empty string when
+// the value is not a valid signed token.
 func (storage *CookieStorage) Family(id string) string {
 	payload, err := storage.decode(id)
 	if err != nil {
@@ -309,86 +323,6 @@ func (storage *CookieStorage) sign(value []byte) []byte {
 	hasher := hmac.New(sha256.New, storage.secret)
 	_, _ = hasher.Write(value)
 	return hasher.Sum(nil)
-}
-
-func cloneValues(values map[string]any) map[string]any {
-	clone := make(map[string]any, len(values))
-	for key, value := range values {
-		clone[key] = cloneSessionValue(reflect.ValueOf(value))
-	}
-	return clone
-}
-
-func cloneSessionValue(value reflect.Value) any {
-	if !value.IsValid() {
-		return nil
-	}
-	switch value.Kind() {
-	case reflect.Interface:
-		if value.IsNil() {
-			return nil
-		}
-		return cloneSessionValue(value.Elem())
-	case reflect.Pointer:
-		if value.IsNil() {
-			return reflect.Zero(value.Type()).Interface()
-		}
-		clone := reflect.New(value.Type().Elem())
-		cloned := reflect.ValueOf(cloneSessionValue(value.Elem()))
-		if cloned.IsValid() && cloned.Type().AssignableTo(value.Type().Elem()) {
-			clone.Elem().Set(cloned)
-		} else {
-			clone.Elem().Set(value.Elem())
-		}
-		return clone.Interface()
-	case reflect.Map:
-		if value.IsNil() {
-			return reflect.Zero(value.Type()).Interface()
-		}
-		clone := reflect.MakeMapWithSize(value.Type(), value.Len())
-		iterator := value.MapRange()
-		for iterator.Next() {
-			mapValue := iterator.Value()
-			clonedAny := cloneSessionValue(mapValue)
-			cloned := reflect.ValueOf(clonedAny)
-			if !cloned.IsValid() {
-				cloned = reflect.Zero(mapValue.Type())
-			} else if !cloned.Type().AssignableTo(mapValue.Type()) {
-				cloned = mapValue
-			}
-			clone.SetMapIndex(iterator.Key(), cloned)
-		}
-		return clone.Interface()
-	case reflect.Slice:
-		if value.IsNil() {
-			return reflect.Zero(value.Type()).Interface()
-		}
-		clone := reflect.MakeSlice(value.Type(), value.Len(), value.Len())
-		for index := 0; index < value.Len(); index++ {
-			clonedAny := cloneSessionValue(value.Index(index))
-			cloned := reflect.ValueOf(clonedAny)
-			if cloned.IsValid() && cloned.Type().AssignableTo(value.Index(index).Type()) {
-				clone.Index(index).Set(cloned)
-			} else {
-				clone.Index(index).Set(value.Index(index))
-			}
-		}
-		return clone.Interface()
-	case reflect.Array:
-		clone := reflect.New(value.Type()).Elem()
-		for index := 0; index < value.Len(); index++ {
-			clonedAny := cloneSessionValue(value.Index(index))
-			cloned := reflect.ValueOf(clonedAny)
-			if cloned.IsValid() && cloned.Type().AssignableTo(value.Index(index).Type()) {
-				clone.Index(index).Set(cloned)
-			} else {
-				clone.Index(index).Set(value.Index(index))
-			}
-		}
-		return clone.Interface()
-	default:
-		return value.Interface()
-	}
 }
 
 // NewID returns a cryptographically random identifier suitable for sessions
