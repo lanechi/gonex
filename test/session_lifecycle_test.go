@@ -195,22 +195,23 @@ func TestCookieSessionLogoutRevokesRotatedTokenFamily(t *testing.T) {
 
 func TestCookieSessionLogoutCoversInFlightFamilyRotations(t *testing.T) {
 	storage := mustCookieStorage(t, "cookie-session-in-flight-family-secret-at-least-32-bytes")
-	tokenA, err := storage.Encode(map[string]any{"value": "first"}, time.Hour)
+	ctx := context.Background()
+	tokenA, err := storage.Encode(ctx, map[string]any{"value": "first"}, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
 	family := storage.Family(tokenA)
-	tokenB, err := storage.EncodeWithFamily(map[string]any{"value": "in-flight"}, 2*time.Hour, family)
+	tokenB, err := storage.EncodeWithFamily(ctx, map[string]any{"value": "in-flight"}, 2*time.Hour, family)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := storage.Delete(context.Background(), tokenA); err != nil {
+	if err := storage.Delete(ctx, tokenA); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := storage.Get(context.Background(), tokenB); !errors.Is(err, session.ErrNotFound) {
+	if _, err := storage.Get(ctx, tokenB); !errors.Is(err, session.ErrNotFound) {
 		t.Fatalf("in-flight token remained valid after logout: %v", err)
 	}
-	if _, err := storage.EncodeWithFamily(map[string]any{"value": "late"}, 2*time.Hour, family); !errors.Is(err, session.ErrNotFound) {
+	if _, err := storage.EncodeWithFamily(ctx, map[string]any{"value": "late"}, 2*time.Hour, family); !errors.Is(err, session.ErrNotFound) {
 		t.Fatalf("revoked family accepted a late rotation: %v", err)
 	}
 }
