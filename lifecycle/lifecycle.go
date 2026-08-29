@@ -16,32 +16,35 @@ type phaseAttempt struct {
 
 // Lifecycle manages ordered hooks and tracked background tasks.
 type Lifecycle struct {
-	mu             sync.Mutex
-	onStart        []Hook
-	onStarted      []Hook
-	onShutdown     []Hook
-	onStop         []Hook
-	startHooksRun  bool
-	startRunning   bool
-	startAttempt   *phaseAttempt
-	started        bool
-	starting       bool
-	startedAttempt *phaseAttempt
-	shutdown       bool
-	shutdownOnce   bool
+	mu              sync.Mutex
+	onStart         []Hook
+	onStarted       []Hook
+	onShutdown      []Hook
+	onStop          []Hook
+	startHooksRun   bool
+	startRunning    bool
+	startAttempt    *phaseAttempt
+	started         bool
+	starting        bool
+	startedAttempt  *phaseAttempt
+	shutdown        bool
+	shutdownOnce    bool
 	shutdownRunning bool
 	shutdownAttempt *phaseAttempt
 	stopRunning     bool
 	stopAttempt     *phaseAttempt
-	tasks          sync.WaitGroup
-	taskContext    context.Context
-	cancelTasks    context.CancelFunc
+	taskCount       int
+	taskDone        chan struct{}
+	taskContext     context.Context
+	cancelTasks     context.CancelFunc
 }
 
 // New creates an independent lifecycle manager.
 func New() *Lifecycle {
 	contextValue, cancel := context.WithCancel(context.Background())
-	return &Lifecycle{taskContext: contextValue, cancelTasks: cancel}
+	done := make(chan struct{})
+	close(done)
+	return &Lifecycle{taskContext: contextValue, cancelTasks: cancel, taskDone: done}
 }
 
 func (lifecycle *Lifecycle) add(target *[]Hook, hook Hook) {
@@ -66,6 +69,9 @@ func (lifecycle *Lifecycle) BeginStart(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	lifecycle.mu.Lock()
 	if lifecycle.startHooksRun {
 		lifecycle.mu.Unlock()
@@ -78,21 +84,29 @@ func (lifecycle *Lifecycle) BeginStart(ctx context.Context) error {
 	if lifecycle.startRunning {
 		attempt := lifecycle.startAttempt
 		lifecycle.mu.Unlock()
-		<-attempt.done
-		return attempt.err
+		return waitAttempt(ctx, attempt)
 	}
 	attempt := &phaseAttempt{done: make(chan struct{})}
 	lifecycle.startRunning = true
 	lifecycle.startAttempt = attempt
 	hooks := append([]Hook(nil), lifecycle.onStart...)
 	lifecycle.mu.Unlock()
+
 	var firstError error
 	for _, hook := range hooks {
 		if err := hook(ctx); err != nil {
 			firstError = err
 			break
 		}
+		if err := ctx.Err(); err != nil {
+			firstError = err
+			break
+		}
 	}
+	if firstError == nil {
+		firstError = ctx.Err()
+	}
+
 	lifecycle.mu.Lock()
 	if firstError == nil && (lifecycle.shutdownOnce || lifecycle.shutdown) {
 		firstError = context.Canceled
@@ -117,6 +131,9 @@ func (lifecycle *Lifecycle) MarkStarted(ctx context.Context) error {
 	if err := lifecycle.BeginStart(ctx); err != nil {
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	lifecycle.mu.Lock()
 	if lifecycle.started {
 		lifecycle.mu.Unlock()
@@ -129,21 +146,29 @@ func (lifecycle *Lifecycle) MarkStarted(ctx context.Context) error {
 	if lifecycle.starting {
 		attempt := lifecycle.startedAttempt
 		lifecycle.mu.Unlock()
-		<-attempt.done
-		return attempt.err
+		return waitAttempt(ctx, attempt)
 	}
 	attempt := &phaseAttempt{done: make(chan struct{})}
 	lifecycle.starting = true
 	lifecycle.startedAttempt = attempt
 	hooks := append([]Hook(nil), lifecycle.onStarted...)
 	lifecycle.mu.Unlock()
+
 	var firstError error
 	for _, hook := range hooks {
 		if err := hook(ctx); err != nil {
 			firstError = err
 			break
 		}
+		if err := ctx.Err(); err != nil {
+			firstError = err
+			break
+		}
 	}
+	if firstError == nil {
+		firstError = ctx.Err()
+	}
+
 	lifecycle.mu.Lock()
 	if firstError == nil && (lifecycle.shutdownOnce || lifecycle.shutdown) {
 		firstError = context.Canceled
@@ -179,22 +204,15 @@ func (lifecycle *Lifecycle) BeginShutdown(ctx context.Context) error {
 	if lifecycle.shutdownRunning {
 		attempt := lifecycle.shutdownAttempt
 		lifecycle.mu.Unlock()
-		select {
-		case <-attempt.done:
-			return attempt.err
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+		return waitAttempt(ctx, attempt)
 	}
 	if lifecycle.shutdownOnce {
 		attempt := lifecycle.shutdownAttempt
+		lifecycle.mu.Unlock()
 		if attempt == nil {
-			lifecycle.mu.Unlock()
 			return nil
 		}
-		lifecycle.mu.Unlock()
-		<-attempt.done
-		return attempt.err
+		return waitAttempt(ctx, attempt)
 	}
 	attempt := &phaseAttempt{done: make(chan struct{})}
 	lifecycle.shutdownOnce = true
@@ -231,26 +249,25 @@ func (lifecycle *Lifecycle) Stop(ctx context.Context) error {
 		ctx = context.Background()
 	}
 	shutdownErr := lifecycle.BeginShutdown(ctx)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 
 	lifecycle.mu.Lock()
 	if lifecycle.stopRunning {
 		attempt := lifecycle.stopAttempt
 		lifecycle.mu.Unlock()
-		select {
-		case <-attempt.done:
-			return attempt.err
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+		return waitAttempt(ctx, attempt)
 	}
 	if lifecycle.shutdown {
 		attempt := lifecycle.stopAttempt
+		lifecycle.mu.Unlock()
 		if attempt == nil {
-			lifecycle.mu.Unlock()
 			return shutdownErr
 		}
-		lifecycle.mu.Unlock()
-		<-attempt.done
+		if err := waitAttempt(ctx, attempt); err != nil {
+			return err
+		}
 		return attempt.err
 	}
 	attempt := &phaseAttempt{done: make(chan struct{})}
@@ -275,7 +292,8 @@ func (lifecycle *Lifecycle) Stop(ctx context.Context) error {
 	return firstError
 }
 
-// Go tracks a background task and waits for it during shutdown.
+// Go starts and tracks a background task. Tasks added after shutdown begins are
+// rejected. The task receives a context canceled by BeginShutdown.
 func (lifecycle *Lifecycle) Go(task func(context.Context)) {
 	if lifecycle == nil || task == nil {
 		return
@@ -285,11 +303,15 @@ func (lifecycle *Lifecycle) Go(task func(context.Context)) {
 		lifecycle.mu.Unlock()
 		return
 	}
+	if lifecycle.taskCount == 0 {
+		lifecycle.taskDone = make(chan struct{})
+	}
+	lifecycle.taskCount++
 	taskContext := lifecycle.taskContext
-	lifecycle.tasks.Add(1)
 	lifecycle.mu.Unlock()
+
 	go func() {
-		defer lifecycle.tasks.Done()
+		defer lifecycle.taskFinished()
 		if taskContext == nil {
 			taskContext = context.Background()
 		}
@@ -297,7 +319,21 @@ func (lifecycle *Lifecycle) Go(task func(context.Context)) {
 	}()
 }
 
-// Wait waits for tracked tasks to finish or for ctx to expire.
+func (lifecycle *Lifecycle) taskFinished() {
+	lifecycle.mu.Lock()
+	defer lifecycle.mu.Unlock()
+	if lifecycle.taskCount == 0 {
+		return
+	}
+	lifecycle.taskCount--
+	if lifecycle.taskCount == 0 {
+		close(lifecycle.taskDone)
+	}
+}
+
+// Wait waits for all currently tracked tasks to finish or for ctx to expire.
+// It allocates no waiter goroutine and has no sync.WaitGroup Add/Wait ordering
+// constraint.
 func (lifecycle *Lifecycle) Wait(ctx context.Context) error {
 	if lifecycle == nil {
 		return nil
@@ -305,14 +341,31 @@ func (lifecycle *Lifecycle) Wait(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	done := make(chan struct{})
-	go func() {
-		lifecycle.tasks.Wait()
-		close(done)
-	}()
+	lifecycle.mu.Lock()
+	if lifecycle.taskCount == 0 {
+		lifecycle.mu.Unlock()
+		return nil
+	}
+	done := lifecycle.taskDone
+	lifecycle.mu.Unlock()
 	select {
 	case <-done:
 		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func waitAttempt(ctx context.Context, attempt *phaseAttempt) error {
+	if attempt == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-attempt.done:
+		return attempt.err
 	case <-ctx.Done():
 		return ctx.Err()
 	}
