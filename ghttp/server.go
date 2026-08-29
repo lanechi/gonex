@@ -471,12 +471,17 @@ func (server *Server) logListening(tlsEnabled bool) {
 
 // Shutdown gracefully stops the HTTP server. All independent cleanup failures
 // are preserved so callers can diagnose partial shutdown instead of receiving
-// only the first error.
+// only the first error. A lifecycle transition that is already active returns
+// immediately; proceeding with HTTP/template/logger cleanup in that case could
+// race the phase that still owns those resources.
 func (server *Server) Shutdown(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	lifecycleErr := server.lifecycle.BeginShutdown(ctx)
+	if errors.Is(lifecycleErr, lifecycle.ErrPhaseInProgress) {
+		return lifecycleErr
+	}
 	httpErr := server.httpServer.Shutdown(ctx)
 	if errors.Is(httpErr, http.ErrServerClosed) {
 		httpErr = nil

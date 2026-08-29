@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -23,6 +24,21 @@ type LifecycleHook func(context.Context) error
 
 type schedulerLoggerSetter interface {
 	SetDefaultLogger(logging.Logger)
+}
+
+type acceptReadyListener struct {
+	net.Listener
+	once  sync.Once
+	ready chan struct{}
+}
+
+func newAcceptReadyListener(listener net.Listener) *acceptReadyListener {
+	return &acceptReadyListener{Listener: listener, ready: make(chan struct{})}
+}
+
+func (listener *acceptReadyListener) Accept() (net.Conn, error) {
+	listener.once.Do(func() { close(listener.ready) })
+	return listener.Listener.Accept()
 }
 
 func (server *Server) configureScheduler() {
@@ -115,12 +131,27 @@ func (server *Server) runContext(ctx context.Context, address string, tlsEnabled
 		}
 		server.listenerMu.Unlock()
 	}()
+
+	servingListener := newAcceptReadyListener(listener)
+	errorsChannel := make(chan error, 1)
+	go func() { errorsChannel <- server.httpServer.Serve(servingListener) }()
+	select {
+	case <-servingListener.ready:
+		// Serve has entered its accept loop. OnStarted hooks may now perform
+		// local readiness probes without waiting for runContext to call Serve.
+	case err := <-errorsChannel:
+		return server.finishServe(err)
+	case <-ctx.Done():
+		_ = servingListener.Close()
+		<-errorsChannel
+		return errors.Join(ctx.Err(), server.cleanupFailedStart())
+	}
+
 	if err := server.lifecycle.MarkStarted(ctx); err != nil {
-		_ = listener.Close()
+		_ = servingListener.Close()
+		<-errorsChannel
 		return errors.Join(err, server.cleanupFailedStart())
 	}
-	errorsChannel := make(chan error, 1)
-	go func() { errorsChannel <- server.httpServer.Serve(listener) }()
 	select {
 	case err := <-errorsChannel:
 		return server.finishServe(err)
@@ -211,7 +242,7 @@ func (server *Server) Close() error {
 // OnStart registers a hook before the listener starts accepting requests.
 func (server *Server) OnStart(hook LifecycleHook) { server.lifecycle.OnStart(lifecycle.Hook(hook)) }
 
-// OnStarted registers a hook after startup has completed.
+// OnStarted registers a hook after the HTTP server has entered its accept loop.
 func (server *Server) OnStarted(hook LifecycleHook) { server.lifecycle.OnStarted(lifecycle.Hook(hook)) }
 
 // OnShutdown registers a hook before active requests are drained.

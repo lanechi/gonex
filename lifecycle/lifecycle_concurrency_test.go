@@ -8,14 +8,15 @@ import (
 	"time"
 )
 
-func TestConcurrentShutdownWaitsForSameAttemptAndStopWaitsForShutdown(t *testing.T) {
-	l := New()
+func TestConcurrentShutdownAndStopReturnPhaseInProgress(t *testing.T) {
+	lifecycle := New()
 	shutdownStarted := make(chan struct{})
 	releaseShutdown := make(chan struct{})
+	stopCalled := make(chan struct{}, 1)
 	var mu sync.Mutex
 	order := make([]string, 0, 2)
 
-	l.OnShutdown(func(context.Context) error {
+	lifecycle.OnShutdown(func(context.Context) error {
 		close(shutdownStarted)
 		<-releaseShutdown
 		mu.Lock()
@@ -23,7 +24,8 @@ func TestConcurrentShutdownWaitsForSameAttemptAndStopWaitsForShutdown(t *testing
 		mu.Unlock()
 		return nil
 	})
-	l.OnStop(func(context.Context) error {
+	lifecycle.OnStop(func(context.Context) error {
+		stopCalled <- struct{}{}
 		mu.Lock()
 		order = append(order, "stop")
 		mu.Unlock()
@@ -31,30 +33,26 @@ func TestConcurrentShutdownWaitsForSameAttemptAndStopWaitsForShutdown(t *testing
 	})
 
 	firstDone := make(chan error, 1)
-	go func() { firstDone <- l.BeginShutdown(context.Background()) }()
+	go func() { firstDone <- lifecycle.BeginShutdown(context.Background()) }()
 	<-shutdownStarted
 
-	secondDone := make(chan error, 1)
-	go func() { secondDone <- l.BeginShutdown(context.Background()) }()
-	stopDone := make(chan error, 1)
-	go func() { stopDone <- l.Stop(context.Background()) }()
-
+	if err := lifecycle.BeginShutdown(context.Background()); !errors.Is(err, ErrPhaseInProgress) {
+		t.Fatalf("concurrent BeginShutdown error = %v, want ErrPhaseInProgress", err)
+	}
+	if err := lifecycle.Stop(context.Background()); !errors.Is(err, ErrPhaseInProgress) {
+		t.Fatalf("Stop during shutdown error = %v, want ErrPhaseInProgress", err)
+	}
 	select {
-	case <-secondDone:
-		t.Fatal("concurrent BeginShutdown returned before active shutdown attempt completed")
-	case <-stopDone:
-		t.Fatal("Stop returned before active shutdown attempt completed")
-	case <-time.After(20 * time.Millisecond):
+	case <-stopCalled:
+		t.Fatal("OnStop ran before active shutdown completed")
+	default:
 	}
 
 	close(releaseShutdown)
 	if err := <-firstDone; err != nil {
 		t.Fatal(err)
 	}
-	if err := <-secondDone; err != nil {
-		t.Fatal(err)
-	}
-	if err := <-stopDone; err != nil {
+	if err := lifecycle.Stop(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -65,88 +63,46 @@ func TestConcurrentShutdownWaitsForSameAttemptAndStopWaitsForShutdown(t *testing
 	}
 }
 
-func TestConcurrentStartWaiterHonorsContextCancellation(t *testing.T) {
-	l := New()
+func TestConcurrentStartReturnsPhaseInProgressWithoutWaiting(t *testing.T) {
+	lifecycle := New()
 	started := make(chan struct{})
 	release := make(chan struct{})
-	l.OnStart(func(context.Context) error {
+	lifecycle.OnStart(func(context.Context) error {
 		close(started)
 		<-release
 		return nil
 	})
 	first := make(chan error, 1)
-	go func() { first <- l.BeginStart(context.Background()) }()
+	go func() { first <- lifecycle.BeginStart(context.Background()) }()
 	<-started
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := l.BeginStart(ctx); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("concurrent start wait error = %v", err)
+	if err := lifecycle.BeginStart(ctx); !errors.Is(err, ErrPhaseInProgress) {
+		t.Fatalf("concurrent start error = %v, want ErrPhaseInProgress", err)
 	}
 	close(release)
 	if err := <-first; err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestStopTimeoutDoesNotRunFinalHooksBeforeShutdownCompletes(t *testing.T) {
-	l := New()
-	shutdownStarted := make(chan struct{})
-	release := make(chan struct{})
-	stopCalled := make(chan struct{}, 1)
-	l.OnShutdown(func(context.Context) error {
-		close(shutdownStarted)
-		<-release
-		return nil
-	})
-	l.OnStop(func(context.Context) error {
-		stopCalled <- struct{}{}
-		return nil
-	})
-	first := make(chan error, 1)
-	go func() { first <- l.BeginShutdown(context.Background()) }()
-	<-shutdownStarted
-
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-	if err := l.Stop(ctx); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Stop timeout error = %v", err)
-	}
-	select {
-	case <-stopCalled:
-		t.Fatal("OnStop ran before active shutdown completed")
-	default:
-	}
-	close(release)
-	if err := <-first; err != nil {
-		t.Fatal(err)
-	}
-	if err := l.Stop(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case <-stopCalled:
-	default:
-		t.Fatal("OnStop did not run after shutdown completed")
 	}
 }
 
 func TestTrackedTasksCancelAndWaitWithoutWaitGroupOrdering(t *testing.T) {
-	l := New()
+	lifecycle := New()
 	started := make(chan struct{})
 	finished := make(chan struct{})
-	l.Go(func(ctx context.Context) {
+	lifecycle.Go(func(ctx context.Context) {
 		close(started)
 		<-ctx.Done()
 		close(finished)
 	})
 	<-started
-	if err := l.BeginShutdown(context.Background()); err != nil {
+	if err := lifecycle.BeginShutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := l.Wait(ctx); err != nil {
+	if err := lifecycle.Wait(ctx); err != nil {
 		t.Fatal(err)
 	}
 	select {

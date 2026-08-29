@@ -3,7 +3,20 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
+)
+
+var (
+	// ErrPhaseInProgress reports an attempt to synchronously enter a lifecycle
+	// phase while another phase invocation that must complete first is active.
+	// Returning an error instead of waiting prevents lifecycle hooks from
+	// deadlocking by re-entering Start, Shutdown, or Stop from the same goroutine.
+	ErrPhaseInProgress = errors.New("lifecycle phase is already in progress")
+	// ErrStartupInProgress records shutdown intent while startup hooks are still
+	// active. The caller must let startup unwind before cleanup is retried.
+	ErrStartupInProgress = fmt.Errorf("%w: shutdown deferred until startup finishes", ErrPhaseInProgress)
 )
 
 // Hook is invoked during startup or shutdown.
@@ -62,7 +75,8 @@ func (lifecycle *Lifecycle) OnStarted(hook Hook)  { lifecycle.add(&lifecycle.onS
 func (lifecycle *Lifecycle) OnShutdown(hook Hook) { lifecycle.add(&lifecycle.onShutdown, hook) }
 func (lifecycle *Lifecycle) OnStop(hook Hook)     { lifecycle.add(&lifecycle.onStop, hook) }
 
-// BeginStart runs pre-listener startup hooks once.
+// BeginStart runs pre-listener startup hooks once. A concurrent or reentrant
+// call returns ErrPhaseInProgress instead of waiting on the active attempt.
 func (lifecycle *Lifecycle) BeginStart(ctx context.Context) error {
 	if lifecycle == nil {
 		return nil
@@ -83,9 +97,8 @@ func (lifecycle *Lifecycle) BeginStart(ctx context.Context) error {
 		return context.Canceled
 	}
 	if lifecycle.startRunning {
-		attempt := lifecycle.startAttempt
 		lifecycle.mu.Unlock()
-		return waitAttempt(ctx, attempt)
+		return fmt.Errorf("%w: start", ErrPhaseInProgress)
 	}
 	attempt := &phaseAttempt{done: make(chan struct{})}
 	lifecycle.startRunning = true
@@ -121,7 +134,8 @@ func (lifecycle *Lifecycle) BeginStart(ctx context.Context) error {
 	return firstError
 }
 
-// MarkStarted runs post-listener startup hooks once.
+// MarkStarted runs post-listener startup hooks once. A concurrent or reentrant
+// call returns ErrPhaseInProgress instead of waiting on the active attempt.
 func (lifecycle *Lifecycle) MarkStarted(ctx context.Context) error {
 	if lifecycle == nil {
 		return nil
@@ -145,9 +159,8 @@ func (lifecycle *Lifecycle) MarkStarted(ctx context.Context) error {
 		return context.Canceled
 	}
 	if lifecycle.starting {
-		attempt := lifecycle.startedAttempt
 		lifecycle.mu.Unlock()
-		return waitAttempt(ctx, attempt)
+		return fmt.Errorf("%w: started", ErrPhaseInProgress)
 	}
 	attempt := &phaseAttempt{done: make(chan struct{})}
 	lifecycle.starting = true
@@ -192,10 +205,10 @@ func (lifecycle *Lifecycle) Start(ctx context.Context) error {
 	return lifecycle.MarkStarted(ctx)
 }
 
-// BeginShutdown blocks new startup work, waits for any active startup phase to
-// finish, then cancels tracked tasks and runs shutdown hooks once. Startup's
-// own result is intentionally not propagated: shutdown intent may cause that
-// startup attempt to return context.Canceled, while shutdown itself succeeded.
+// BeginShutdown blocks new startup work, cancels tracked tasks, and runs
+// shutdown hooks once. If startup hooks are active, shutdown intent is recorded
+// and ErrStartupInProgress is returned immediately; waiting here could deadlock
+// when the call originates from the active startup hook itself.
 func (lifecycle *Lifecycle) BeginShutdown(ctx context.Context) error {
 	if lifecycle == nil {
 		return nil
@@ -203,37 +216,37 @@ func (lifecycle *Lifecycle) BeginShutdown(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	lifecycle.mu.Lock()
 	if lifecycle.shutdownRunning {
-		attempt := lifecycle.shutdownAttempt
 		lifecycle.mu.Unlock()
-		return waitAttempt(ctx, attempt)
+		return fmt.Errorf("%w: shutdown", ErrPhaseInProgress)
 	}
 	if lifecycle.shutdownHooksRun {
 		attempt := lifecycle.shutdownAttempt
 		lifecycle.mu.Unlock()
-		return waitAttempt(ctx, attempt)
+		if attempt == nil {
+			return nil
+		}
+		return attempt.err
 	}
-	attempt := &phaseAttempt{done: make(chan struct{})}
+
 	lifecycle.shutdownOnce = true
-	lifecycle.shutdownRunning = true
-	lifecycle.shutdownAttempt = attempt
-	startAttempt := lifecycle.startAttempt
-	startedAttempt := lifecycle.startedAttempt
-	hooks := append([]Hook(nil), lifecycle.onShutdown...)
 	if lifecycle.cancelTasks != nil {
 		lifecycle.cancelTasks()
 	}
-	lifecycle.mu.Unlock()
+	if lifecycle.startRunning || lifecycle.starting {
+		lifecycle.mu.Unlock()
+		return ErrStartupInProgress
+	}
 
-	if err := waitAttemptCompletion(ctx, startAttempt); err != nil {
-		lifecycle.finishShutdownAttempt(attempt, err, false)
-		return err
-	}
-	if err := waitAttemptCompletion(ctx, startedAttempt); err != nil {
-		lifecycle.finishShutdownAttempt(attempt, err, false)
-		return err
-	}
+	attempt := &phaseAttempt{done: make(chan struct{})}
+	lifecycle.shutdownRunning = true
+	lifecycle.shutdownAttempt = attempt
+	hooks := append([]Hook(nil), lifecycle.onShutdown...)
+	lifecycle.mu.Unlock()
 
 	var firstError error
 	for _, hook := range hooks {
@@ -241,23 +254,21 @@ func (lifecycle *Lifecycle) BeginShutdown(ctx context.Context) error {
 			firstError = err
 		}
 	}
-	lifecycle.finishShutdownAttempt(attempt, firstError, true)
+	lifecycle.finishShutdownAttempt(attempt, firstError)
 	return firstError
 }
 
-func (lifecycle *Lifecycle) finishShutdownAttempt(attempt *phaseAttempt, err error, hooksRun bool) {
+func (lifecycle *Lifecycle) finishShutdownAttempt(attempt *phaseAttempt, err error) {
 	lifecycle.mu.Lock()
 	lifecycle.shutdownRunning = false
-	if hooksRun {
-		lifecycle.shutdownHooksRun = true
-	}
+	lifecycle.shutdownHooksRun = true
 	attempt.err = err
 	close(attempt.done)
 	lifecycle.mu.Unlock()
 }
 
 // Stop runs final lifecycle hooks once, after the shutdown phase has completed.
-// Concurrent callers wait for the same stop attempt.
+// Concurrent or reentrant calls return ErrPhaseInProgress instead of waiting.
 func (lifecycle *Lifecycle) Stop(ctx context.Context) error {
 	if lifecycle == nil {
 		return nil
@@ -266,6 +277,9 @@ func (lifecycle *Lifecycle) Stop(ctx context.Context) error {
 		ctx = context.Background()
 	}
 	shutdownErr := lifecycle.BeginShutdown(ctx)
+	if errors.Is(shutdownErr, ErrPhaseInProgress) {
+		return shutdownErr
+	}
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -276,18 +290,14 @@ func (lifecycle *Lifecycle) Stop(ctx context.Context) error {
 		return shutdownErr
 	}
 	if lifecycle.stopRunning {
-		attempt := lifecycle.stopAttempt
 		lifecycle.mu.Unlock()
-		return waitAttempt(ctx, attempt)
+		return fmt.Errorf("%w: stop", ErrPhaseInProgress)
 	}
 	if lifecycle.shutdown {
 		attempt := lifecycle.stopAttempt
 		lifecycle.mu.Unlock()
 		if attempt == nil {
 			return shutdownErr
-		}
-		if err := waitAttempt(ctx, attempt); err != nil {
-			return err
 		}
 		return attempt.err
 	}
@@ -371,36 +381,6 @@ func (lifecycle *Lifecycle) Wait(ctx context.Context) error {
 	lifecycle.mu.Unlock()
 	select {
 	case <-done:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func waitAttempt(ctx context.Context, attempt *phaseAttempt) error {
-	if attempt == nil {
-		return nil
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	select {
-	case <-attempt.done:
-		return attempt.err
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func waitAttemptCompletion(ctx context.Context, attempt *phaseAttempt) error {
-	if attempt == nil {
-		return nil
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	select {
-	case <-attempt.done:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()

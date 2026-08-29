@@ -18,6 +18,8 @@ var ErrServerNotRunning = errors.New("server is not running")
 
 var ErrServerRunning = errors.New("server is already running")
 
+var ErrRestartInProgress = errors.New("server restart is already in progress")
+
 // RestartManager is the platform boundary for zero-downtime process restart.
 // Implementations may coordinate listener FD inheritance and readiness with a
 // supervisor without coupling those concerns to the Server core.
@@ -37,6 +39,9 @@ type serverRestartManager struct {
 	attempt *restartAttempt
 }
 
+// Restart serializes process handoff. Concurrent or reentrant restart requests
+// return ErrRestartInProgress instead of waiting, which prevents shutdown hooks
+// from deadlocking if they accidentally request another restart.
 func (manager *serverRestartManager) Restart(ctx context.Context) error {
 	if manager == nil || manager.server == nil {
 		return ErrGracefulRestartUnsupported
@@ -49,9 +54,8 @@ func (manager *serverRestartManager) Restart(ctx context.Context) error {
 	}
 	manager.mu.Lock()
 	if manager.running {
-		attempt := manager.attempt
 		manager.mu.Unlock()
-		return waitRestartAttempt(ctx, attempt)
+		return ErrRestartInProgress
 	}
 	// Cancellation may race with acquiring the serialization lock. Do not
 	// publish a new restart attempt, duplicate the listener, or spawn a child
@@ -72,18 +76,6 @@ func (manager *serverRestartManager) Restart(ctx context.Context) error {
 	close(attempt.done)
 	manager.mu.Unlock()
 	return err
-}
-
-func waitRestartAttempt(ctx context.Context, attempt *restartAttempt) error {
-	if attempt == nil {
-		return nil
-	}
-	select {
-	case <-attempt.done:
-		return attempt.err
-	case <-ctx.Done():
-		return ctx.Err()
-	}
 }
 
 func (manager *serverRestartManager) restart(ctx context.Context) error {
@@ -168,15 +160,17 @@ func (manager *serverRestartManager) restart(ctx context.Context) error {
 		_, _ = process.Wait()
 		return errors.New("replacement process readiness timed out")
 	}
+
+	// Handoff boundary: after the child reports ready it owns a valid inherited
+	// listener and is responsible for continuing service. Parent cleanup may
+	// still report errors, but killing the ready child at that point can leave
+	// both generations unable to accept connections because Shutdown may have
+	// already closed the parent's listener.
 	shutdownContext, cancel := context.WithTimeout(ctx, manager.server.shutdownTimeout)
 	defer cancel()
-	if err := manager.server.Shutdown(shutdownContext); err != nil {
-		_ = process.Kill()
-		_, _ = process.Wait()
-		return err
-	}
+	shutdownErr := manager.server.Shutdown(shutdownContext)
 	go func() { _, _ = process.Wait() }()
-	return nil
+	return shutdownErr
 }
 
 func restartEnvironment() []string {
