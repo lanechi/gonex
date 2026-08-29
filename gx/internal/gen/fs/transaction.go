@@ -95,7 +95,9 @@ func (transaction *Transaction) Write(relative string, content []byte, permissio
 	return nil
 }
 
-// Commit publishes all staged files and closes the transaction.
+// Commit publishes all staged files and closes the transaction. Every target
+// path is revalidated immediately before mutation so a parent replaced with a
+// symlink after Write/Delete validation cannot redirect the commit.
 func (transaction *Transaction) Commit() error {
 	if transaction == nil || !transaction.open {
 		return fmt.Errorf("file transaction is closed")
@@ -135,7 +137,11 @@ func (transaction *Transaction) Commit() error {
 			rollback()
 			return fmt.Errorf("resolve staged file: %w", err)
 		}
-		destination := filepath.Join(transaction.root, relative)
+		destination, err := safeProjectPath(transaction.root, relative)
+		if err != nil {
+			rollback()
+			return fmt.Errorf("revalidate destination %s: %w", relative, err)
+		}
 		if _, statErr := os.Stat(destination); statErr == nil {
 			backup := filepath.Join(transaction.backup, relative)
 			if err := os.MkdirAll(filepath.Dir(backup), 0o755); err != nil {
@@ -162,7 +168,11 @@ func (transaction *Transaction) Commit() error {
 		installed = append(installed, destination)
 	}
 	for _, relative := range transaction.deletes {
-		destination := filepath.Join(transaction.root, relative)
+		destination, err := safeProjectPath(transaction.root, relative)
+		if err != nil {
+			rollback()
+			return fmt.Errorf("revalidate delete destination %s: %w", relative, err)
+		}
 		if _, statErr := os.Stat(destination); os.IsNotExist(statErr) {
 			continue
 		} else if statErr != nil {
