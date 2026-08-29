@@ -7,7 +7,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"syscall"
 
 	"github.com/mattn/go-isatty"
 	"go.uber.org/zap"
@@ -21,8 +20,9 @@ type ownedOutput struct {
 }
 
 type zapLogger struct {
-	logger *zap.Logger
-	output *ownedOutput
+	logger         *zap.Logger
+	output         *ownedOutput
+	standardStream bool
 }
 
 func newZapLogger(configuration Config, supplied io.Writer) (Logger, error) {
@@ -55,6 +55,7 @@ func newZapLogger(configuration Config, supplied io.Writer) (Logger, error) {
 			output = &ownedOutput{closer: closer}
 		}
 	}
+	standardStream := writer == os.Stdout || writer == os.Stderr
 
 	encoderConfig := zapcore.EncoderConfig{
 		TimeKey:        "time",
@@ -91,7 +92,7 @@ func newZapLogger(configuration Config, supplied io.Writer) (Logger, error) {
 	if configuration.Stacktrace {
 		options = append(options, zap.AddStacktrace(zapcore.ErrorLevel))
 	}
-	return &zapLogger{logger: zap.New(core, options...), output: output}, nil
+	return &zapLogger{logger: zap.New(core, options...), output: output, standardStream: standardStream}, nil
 }
 
 func openOutput(output string) (io.Writer, io.Closer, error) {
@@ -142,11 +143,11 @@ func (logger *zapLogger) Error(_ context.Context, msg string, fields ...Field) {
 }
 
 func (logger *zapLogger) With(fields ...Field) Logger {
-	return &zapLogger{logger: logger.logger.With(toZapFields(fields)...), output: logger.output}
+	return &zapLogger{logger: logger.logger.With(toZapFields(fields)...), output: logger.output, standardStream: logger.standardStream}
 }
 
 func (logger *zapLogger) Named(name string) Logger {
-	return &zapLogger{logger: logger.logger.Named(name), output: logger.output}
+	return &zapLogger{logger: logger.logger.Named(name), output: logger.output, standardStream: logger.standardStream}
 }
 
 func (logger *zapLogger) Enabled(level Level) bool {
@@ -154,13 +155,10 @@ func (logger *zapLogger) Enabled(level Level) bool {
 }
 
 func (logger *zapLogger) Sync() error {
-	if logger == nil || logger.logger == nil {
+	if logger == nil || logger.logger == nil || logger.standardStream {
 		return nil
 	}
-	if err := logger.logger.Sync(); err != nil && !errors.Is(err, syscall.EINVAL) {
-		return err
-	}
-	return nil
+	return logger.logger.Sync()
 }
 
 // Close synchronizes the logger and closes only file outputs opened by the
