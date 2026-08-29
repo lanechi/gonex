@@ -121,3 +121,30 @@ func TestSessionLogoutKeepsHandleWhenStorageDeleteFails(t *testing.T) {
 		t.Fatalf("failed logout incorrectly marked session logged out: %v", err)
 	}
 }
+
+func TestSessionLogoutPreflightsCookieBeforeRevocation(t *testing.T) {
+	revocations := session.NewMemoryCookieRevocationStore()
+	storage, err := session.NewCookieStorage(make([]byte, 32), revocations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := NewSessionManager(storage, "session_id", time.Hour)
+	ctx := newSessionTestContext(t, manager)
+
+	opened, err := manager.Open(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldID := opened.ID()
+	ctx.gin.Writer.WriteHeader(http.StatusOK)
+
+	if err := opened.Logout(); err == nil {
+		t.Fatal("expected logout failure after response headers were written")
+	}
+	if opened.ID() != oldID {
+		t.Fatalf("session id changed after unpublishable logout: got %q want %q", opened.ID(), oldID)
+	}
+	if _, err := storage.Get(context.Background(), oldID); err != nil {
+		t.Fatalf("logout revoked token before cookie deletion preflight: %v", err)
+	}
+}
