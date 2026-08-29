@@ -266,12 +266,17 @@ func WithResponseEncoder(encoder ResponseEncoder) Option {
 	}
 }
 
-// WithErrorHandler replaces the default controller, binding, and validation
-// error handler.
+// WithErrorHandler replaces the default framework error handler. The built-in
+// OpenAPI error schema describes only Gonex's default error envelope, so a
+// custom handler disables the built-in OpenAPI endpoints by default. A later
+// WithOpenAPI option may explicitly re-enable them when the application owns
+// the resulting documentation contract.
 func WithErrorHandler(handler ErrorHandler) Option {
 	return func(server *Server) {
 		if handler != nil {
 			server.errorHandler = handler
+			server.openapiEnabled = false
+			server.options.OpenAPI = optional[OpenAPIOptions]{Value: OpenAPIOptions{Enabled: false}, Set: true}
 		}
 	}
 }
@@ -323,7 +328,6 @@ func WithShutdownTimeout(timeout time.Duration) Option {
 			server.shutdownTimeout = timeout
 			server.options.ShutdownTimeout = optional[time.Duration]{Value: timeout, Set: true}
 		}
-	}
 }
 
 // WithTLS enables TLS when Run is used.
