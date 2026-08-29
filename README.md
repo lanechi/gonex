@@ -2,7 +2,7 @@
 
 gonex 是一个基于 Gin 的轻量 Go Web 框架，设计思路来源于 GoFrame v2，但只聚焦 Web Server：声明式路由、Controller、请求绑定、统一响应、Middleware、配置、日志、安全、Session、模板、静态资源、OpenAPI、生命周期和定时任务。
 
-数据库、缓存、消息队列不是核心运行时依赖。业务项目自行持有这些基础设施的 client 与生命周期；可选适配放在 `contrib/`，代码生成器 `gx` 是独立 Go module。
+数据库、缓存、消息队列不是核心运行时依赖。业务项目自行持有这些基础设施的 client 与生命周期。`contrib/gormlog` 与 `contrib/redislog` 各自是独立 Go module，因此 GORM/Redis 不进入 core module 的依赖图；代码生成器 `gx` 也是独立 Go module。
 
 > **当前处于 v1 之前。** 框架优先保证 API 简洁、语义正确、安全和并发行为可证明，不为了兼容错误或冗余 API 增加 alias、函数转发或兼容层。破坏式修改必须同步测试、示例和文档。
 
@@ -49,6 +49,15 @@ go get github.com/lanechi/gonex
 go install github.com/lanechi/gonex/gx@latest
 gx --help
 ```
+
+按需安装第三方日志适配：
+
+```bash
+go get github.com/lanechi/gonex/contrib/gormlog
+go get github.com/lanechi/gonex/contrib/redislog
+```
+
+这两个 `contrib` 包是独立 module，不会把 GORM/Redis 加入只使用 gonex core 的应用依赖图。
 
 核心 module 与 `gx` 使用独立版本标签：
 
@@ -119,6 +128,8 @@ func main() {
 GET /openapi.json
 GET /docs/
 ```
+
+OpenAPI `info.title` 默认使用 Server name；`info.version` 默认是 `unversioned`。应用可通过 `server.openapi.title` 和 `server.openapi.version` 显式声明文档身份。未单独声明的应用错误状态由 OpenAPI `default` response 覆盖。
 
 ## Controller、Router 与 Binder
 
@@ -224,7 +235,7 @@ config.Set > 系统环境变量 > .env > 配置文件 > 默认值
 - `SameSite=None` 的 Session/CSRF Cookie 必须为 Secure；
 - Body、multipart memory、Header 都有默认上限；
 - release/test 模式不向客户端返回内部错误详情；
-- 静态资源有路径边界、symlink 和扩展名约束；
+- 静态资源有路径边界、symlink 和扩展名约束；静态挂载属于 Gin topology mutation，必须在 `Run*` 前完成，并与启动通过 `registrationMu` 序列化；
 - 运行期 Host/CORS/CSRF 设置通过快照与锁切换，不把调用方 slice 直接暴露给请求热路径。
 
 ```go
@@ -445,7 +456,7 @@ Timeout > 0 时框架请求的锁租期包含额外 grace；Timeout == 0 时 Loc
 - Write/Delete 拒绝同一路径和父子路径重叠；
 - 普通 file transaction 不允许删除目录；
 - DirectorySwap 拒绝相同或嵌套 target；
-- Commit 前重新校验真实目标路径，降低 staging 到 commit 之间的 symlink TOCTOU 风险；
+- file/directory transaction 在整个事务生命周期持有同一个 `os.Root`；最终 backup/install/delete/rollback 都通过 descriptor-relative `Root.Rename` / `Root.Remove*` / `Root.MkdirAll` 完成，不使用“检查路径后再按字符串路径 rename”的 publication；
 - 写入失败使用 backup rollback；
 - `gx dao` 的生成目录只能放生成代码，不放业务手写文件。
 
@@ -454,6 +465,7 @@ Timeout > 0 时框架请求的锁租期包含额外 grace；Timeout == 0 时 Loc
 根 module：
 
 ```bash
+go mod tidy -diff
 go test ./...
 go test -race ./...
 go vet ./...
@@ -464,6 +476,7 @@ git diff --check
 
 ```bash
 cd gx
+go mod tidy -diff
 go test ./...
 go test -race ./...
 go vet ./...
@@ -472,12 +485,12 @@ go vet ./...
 独立 module：
 
 ```bash
-for module in examples/basic examples/demo examples/quick-demo benchmarks/gx; do
-  (cd "$module" && go test ./... && go vet ./...)
+for module in contrib/gormlog contrib/redislog examples/basic examples/demo examples/quick-demo benchmarks/gx; do
+  (cd "$module" && go mod tidy -diff && go test ./... && go vet ./...)
 done
 ```
 
-CI 使用同一矩阵。并发、生命周期、动态 CORS、Scheduler snapshot/reconcile、Session snapshot 和 gx 文件事务都有回归测试。
+CI 使用同一矩阵，并额外在 macOS/Windows 验证 core + gx portability；稳定 v1 发布后还会执行 public API compatibility gate。并发、生命周期、动态 CORS、Scheduler snapshot/reconcile、Session snapshot 和 gx 文件事务都有回归测试。
 
 ## 开发原则
 

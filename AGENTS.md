@@ -6,7 +6,7 @@
 
 gonex 是基于 Gin 的轻量 Go Web 框架，只负责 Web Server 相关能力：HTTP、声明式路由、Controller、Binder、Middleware、配置、日志、安全、Session、模板、静态资源、OpenAPI、生命周期和 Scheduler。
 
-数据库、缓存、消息队列属于业务基础设施，不进入 core。可选集成放 `contrib/`；`gx/` 是独立代码生成 module。
+数据库、缓存、消息队列属于业务基础设施，不进入 core。`contrib/gormlog` 与 `contrib/redislog` 分别是独立 Go module，不能把 GORM/Redis 依赖重新带回 root module；`gx/` 是独立代码生成 module。
 
 ## 2. v1 前的 API 原则：不做兼容层
 
@@ -55,7 +55,7 @@ type Binder struct {
 | `lifecycle/` | Hook、后台任务、阶段同步 |
 | `scheduler/` | 本地 Scheduler、持久任务 Loader、Locker、Recorder |
 | `internal/` | core 内部共享实现，不形成公共 API |
-| `contrib/` | 可选第三方适配，不反向污染 core |
+| `contrib/` | 独立 Go module 的可选第三方适配，不反向污染 core module graph |
 | `test/` | 外部契约、架构、安全、集成回归 |
 | `gx/` | 独立 module 的 CLI/生成器 |
 | `examples/demo/` | `gx init` 的规范项目模板 |
@@ -74,7 +74,7 @@ type Binder struct {
 4. `gx` 若生成受影响 API/目录，已同步；
 5. `examples/demo` 与其它受影响 example 已同步；
 6. README/架构/skills 中受影响事实已同步；
-7. 根 module、gx module 和独立 modules 完成验证；
+7. 根 module、gx module、contrib modules 和其它独立 modules 完成 `go mod tidy -diff`、test/vet；并发敏感的 root/gx 还必须通过 `-race`；
 8. `git diff --check` 通过；
 9. 最后再做一次源码审查，检查竞态、ownership、rollback、错误路径和资源释放。
 
@@ -178,6 +178,7 @@ Scan Controller
 - 每个 Server 独立拥有 Registry、OpenAPI cache、security settings、SessionManager、templates、lifecycle、scheduler；
 - `Run*` 不允许同一个 Server 并发启动；
 - address、trusted proxies、route topology 等启动相关修改必须和启动序列化；
+- 任何会修改 Gin topology 的入口（包括 Static/StaticFile/StaticFS）必须先持有 `registrationMu`，并在同一临界区检查 running；禁止 check-then-lock；
 - 动态 Host/CORS/CSRF 使用 `settingsMu` + immutable handler/snapshot 切换；
 - CORS slice 必须脱离调用方所有权后才能进入请求热路径；
 - OpenAPI cache 使用独立锁，路由变更时显式 invalidate；
@@ -401,12 +402,14 @@ runtime Set > process env > .env > config file > default
 - Write 拒绝现有 directory；
 - Delete 拒绝 directory；
 - Write/Delete 之间以及同类操作之间拒绝 equality/ancestor/descendant overlap；
-- Commit 前重新 `safeProjectPath` 校验目标，防止 staging 后 parent 被替换成 symlink；
+- Transaction 从创建到 Commit/Rollback 持有同一个 `os.Root`；最终 publication/backup/delete/rollback 必须使用 descriptor-relative `Root.Rename` / `Root.Remove*` / `Root.MkdirAll`；
+- 禁止恢复“先 `safeProjectPath` 校验，再用 process-visible 字符串路径 `os.Rename`”的 TOCTOU publication；
+- 每个成功创建的 Transaction 必须在所有路径 Commit 或 Rollback，确保 Windows 等平台及时释放 root handle；
 - 出错 rollback backup。
 
 DirectoryTransaction：
 
-- stage 必须是 absolute、existing、non-symlink directory；
+- stage 必须是 project root 内的 absolute、existing、non-symlink directory，并转换成同一 `os.Root` 下的 relative path；
 - Target 必须 project-relative；
 - 多 Target 不能相同或父子嵌套；
 - install 失败恢复旧目录；
@@ -452,6 +455,7 @@ production code + tests > examples > README/AGENTS/skills
 ### Core
 
 ```bash
+go mod tidy -diff
 go test ./...
 go test -race ./...
 go vet ./...
@@ -462,6 +466,7 @@ git diff --check
 
 ```bash
 cd gx
+go mod tidy -diff
 go test ./...
 go test -race ./...
 go vet ./...
@@ -470,8 +475,8 @@ go vet ./...
 ### 独立 modules
 
 ```bash
-for module in examples/basic examples/demo examples/quick-demo benchmarks/gx; do
-  (cd "$module" && go test ./... && go vet ./...)
+for module in contrib/gormlog contrib/redislog examples/basic examples/demo examples/quick-demo benchmarks/gx; do
+  (cd "$module" && go mod tidy -diff && go test ./... && go vet ./...)
 done
 ```
 
@@ -491,8 +496,8 @@ done
 - 失败后是否留下半注册、半替换或 orphan runtime state？
 - Scheduler Replace 是否跨版本保留 overlap 语义？
 - Session Get/Set 是否保持 detached snapshot？
-- gx commit 前是否重新校验真实路径？
-- root/gx/modules 的 test、race、vet 是否全部通过？
+- gx publication 是否始终绑定 retained `os.Root`，且每个 transaction 都在所有路径关闭？
+- root/gx/modules 的 tidy、test、race、vet 与 macOS/Windows portability 是否全部通过？
 - README、AGENTS、examples、skills 是否仍描述当前代码？
 
 只要其中一项不能明确回答，就继续修，不把问题留给后续兼容层。
