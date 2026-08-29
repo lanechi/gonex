@@ -98,7 +98,7 @@ func (server *Server) validateRouteRegistration(routes []router.Definition) erro
 		if runtime.Binder == nil {
 			return fmt.Errorf("route %s %s has no request binder", metadata.Method, metadata.Path)
 		}
-		if err := router.ValidatePathBindings(metadata.Path, runtime.Binder.Fields); err != nil {
+		if err := router.ValidatePathBindings(metadata.Path, metadata.Bindings); err != nil {
 			return fmt.Errorf("route %s %s: %w", metadata.Method, metadata.Path, err)
 		}
 		key := strings.ToUpper(metadata.Method) + " " + routeShape(metadata.Path)
