@@ -21,6 +21,7 @@ import (
 var ErrNotFound = errors.New("session not found")
 
 const minimumCookieSecretBytes = 32
+const memoryCleanupInterval = time.Minute
 
 // Session is the application-facing session contract. Values must be JSON-safe;
 // implementations return detached values so callers cannot mutate session state
@@ -49,14 +50,21 @@ type memorySessionEntry struct {
 	expiresAt time.Time
 }
 
-// MemoryStorage is a process-local session store.
+// MemoryStorage is a process-local session store. Expired entries are swept
+// opportunistically during writes, bounding stale-session growth without a
+// background goroutine or an additional storage lifecycle contract.
 type MemoryStorage struct {
-	mu      sync.RWMutex
-	entries map[string]memorySessionEntry
+	mu          sync.RWMutex
+	entries     map[string]memorySessionEntry
+	nextCleanup time.Time
 }
 
 func NewMemoryStorage() *MemoryStorage {
-	return &MemoryStorage{entries: make(map[string]memorySessionEntry)}
+	now := time.Now()
+	return &MemoryStorage{
+		entries:     make(map[string]memorySessionEntry),
+		nextCleanup: now.Add(memoryCleanupInterval),
+	}
 }
 
 func (storage *MemoryStorage) Get(_ context.Context, id string) (map[string]any, error) {
@@ -98,14 +106,28 @@ func (storage *MemoryStorage) Set(_ context.Context, id string, values map[strin
 	if err != nil {
 		return err
 	}
+	now := time.Now()
 	entry := memorySessionEntry{values: normalized}
 	if ttl > 0 {
-		entry.expiresAt = time.Now().Add(ttl)
+		entry.expiresAt = now.Add(ttl)
 	}
 	storage.mu.Lock()
 	storage.entries[id] = entry
+	storage.cleanupExpiredLocked(now)
 	storage.mu.Unlock()
 	return nil
+}
+
+func (storage *MemoryStorage) cleanupExpiredLocked(now time.Time) {
+	if !storage.nextCleanup.IsZero() && now.Before(storage.nextCleanup) {
+		return
+	}
+	for id, entry := range storage.entries {
+		if memoryEntryExpired(entry, now) {
+			delete(storage.entries, id)
+		}
+	}
+	storage.nextCleanup = now.Add(memoryCleanupInterval)
 }
 
 func (storage *MemoryStorage) Delete(_ context.Context, id string) error {
