@@ -62,7 +62,7 @@ func TestCorePackageLocalDependencyAllowlist(t *testing.T) {
 		"router":    {},
 		"config":    {},
 		"logging":   {},
-		"session":   {},
+		"session":   {"github.com/lanechi/gonex/internal/sessionvalue": {}},
 		"openapi":   {"github.com/lanechi/gonex/router": {}},
 		"lifecycle": {},
 		"scheduler": {"github.com/lanechi/gonex/logging": {}},
