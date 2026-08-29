@@ -11,10 +11,7 @@ import (
 	"testing"
 )
 
-const (
-	redisImportPath = "github.com/redis/go-redis/v9"
-	gonexImportRoot = "github.com/lanechi/gonex/"
-)
+const gonexImportRoot = "github.com/lanechi/gonex/"
 
 func TestCorePackageDependencyBoundaries(t *testing.T) {
 	root := filepath.Join("..")
@@ -109,19 +106,33 @@ func TestCoreRejectsRedisSessionDependencies(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		relative, err := filepath.Rel(root, path)
-		if err != nil {
-			t.Fatal(err)
-		}
 		for _, importSpec := range file.Imports {
 			importPath := strings.Trim(importSpec.Path.Value, `"`)
-			if importPath == redisImportPath && filepath.ToSlash(relative) != "contrib/redislog/redis.go" {
-				t.Errorf("%s imports go-redis outside contrib/redislog", path)
-			}
 			lowerImportPath := strings.ToLower(importPath)
 			if strings.Contains(lowerImportPath, "redis") && strings.Contains(lowerImportPath, "session") {
 				t.Errorf("%s imports forbidden Redis Session package %s", path, importPath)
 			}
+		}
+	}
+}
+
+func TestCoreModuleDoesNotOwnContribDependencies(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("..", "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, dependency := range []string{"github.com/redis/go-redis/v9", "gorm.io/gorm"} {
+		if strings.Contains(text, dependency) {
+			t.Errorf("core go.mod still owns contrib-only dependency %s", dependency)
+		}
+	}
+	for _, moduleFile := range []string{
+		filepath.Join("..", "contrib", "gormlog", "go.mod"),
+		filepath.Join("..", "contrib", "redislog", "go.mod"),
+	} {
+		if info, err := os.Stat(moduleFile); err != nil || info.IsDir() {
+			t.Errorf("independent contrib module is missing: %s: %v", moduleFile, err)
 		}
 	}
 }
@@ -138,7 +149,7 @@ func coreProductionGoFiles(root string) ([]string, error) {
 		}
 		if info.IsDir() {
 			switch filepath.ToSlash(relative) {
-			case ".git", "benchmarks", "examples", "gx", "test":
+			case ".git", "benchmarks", "contrib", "examples", "gx", "test":
 				return filepath.SkipDir
 			}
 			return nil
