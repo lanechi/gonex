@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/lanechi/gonex v0.0.0
+	github.com/lanechi/gonex v0.1.4
 	github.com/lanechi/gonex/contrib/gormlog v0.0.0
 	github.com/spf13/cobra v1.10.2
 	gorm.io/driver/postgres v1.6.1
@@ -12,6 +12,7 @@ require (
 )
 
 replace github.com/lanechi/gonex => ../..
+
 replace github.com/lanechi/gonex/contrib/gormlog => ../../contrib/gormlog
 
 require (
