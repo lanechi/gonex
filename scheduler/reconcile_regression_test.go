@@ -9,9 +9,10 @@ import (
 )
 
 type faultScheduler struct {
-	jobs       map[string]Job
-	failAdd    string
-	failRemove string
+	jobs        map[string]Job
+	failAdd     string
+	failRemove  string
+	failReplace string
 }
 
 func newFaultScheduler() *faultScheduler { return &faultScheduler{jobs: make(map[string]Job)} }
@@ -19,6 +20,9 @@ func (*faultScheduler) Start(context.Context) error { return nil }
 func (*faultScheduler) Stop()                       {}
 func (*faultScheduler) Wait(context.Context) error  { return nil }
 func (*faultScheduler) Use(...Middleware) error     { return nil }
+func (scheduler *faultScheduler) Validate(job Job) error {
+	return validateJob(job, time.Local)
+}
 func (scheduler *faultScheduler) Add(job Job) error {
 	if job.Name == scheduler.failAdd {
 		return fmt.Errorf("forced add failure: %s", job.Name)
@@ -26,7 +30,17 @@ func (scheduler *faultScheduler) Add(job Job) error {
 	if _, exists := scheduler.jobs[job.Name]; exists {
 		return fmt.Errorf("%w: %s", ErrDuplicateJob, job.Name)
 	}
-	scheduler.jobs[job.Name] = job
+	scheduler.jobs[job.Name] = cloneJob(job)
+	return nil
+}
+func (scheduler *faultScheduler) Replace(job Job) error {
+	if job.Name == scheduler.failReplace {
+		return fmt.Errorf("forced replace failure: %s", job.Name)
+	}
+	if _, exists := scheduler.jobs[job.Name]; !exists {
+		return fmt.Errorf("%w: %s", ErrJobNotFound, job.Name)
+	}
+	scheduler.jobs[job.Name] = cloneJob(job)
 	return nil
 }
 func (scheduler *faultScheduler) Remove(name string) error {
@@ -78,7 +92,9 @@ func TestLoaderRollbackRestoresStateAfterRemoveFailure(t *testing.T) {
 	loader, err := NewLoader(store, persistentRegistry(t), runtime)
 	if err != nil { t.Fatal(err) }
 	if err := loader.Sync(context.Background()); err != nil { t.Fatal(err) }
+	store.mu.Lock()
 	store.jobs = nil
+	store.mu.Unlock()
 	runtime.failRemove = "b"
 	if err := loader.Sync(context.Background()); err == nil { t.Fatal("remove failure was ignored") }
 	assertRuntimeNames(t, runtime, "a", "b")
@@ -91,11 +107,27 @@ func TestLoaderRollbackRestoresStateAfterAddFailure(t *testing.T) {
 	loader, err := NewLoader(store, persistentRegistry(t), runtime)
 	if err != nil { t.Fatal(err) }
 	if err := loader.Sync(context.Background()); err != nil { t.Fatal(err) }
+	store.mu.Lock()
 	store.jobs = []JobDefinition{persistentDefinition("1", "a2", 2), persistentDefinition("2", "b2", 2)}
+	store.mu.Unlock()
 	runtime.failAdd = "b2"
 	if err := loader.Sync(context.Background()); err == nil { t.Fatal("add failure was ignored") }
 	assertRuntimeNames(t, runtime, "a", "b")
 	if loader.loaded["1"].Name != "a" || loader.loaded["2"].Name != "b" { t.Fatalf("loaded = %#v", loader.loaded) }
+}
+
+func TestLoaderRollbackRestoresStateAfterReplaceFailure(t *testing.T) {
+	store := &memoryJobStore{jobs: []JobDefinition{persistentDefinition("1", "job", 1)}}
+	runtime := newFaultScheduler()
+	loader, err := NewLoader(store, persistentRegistry(t), runtime)
+	if err != nil { t.Fatal(err) }
+	if err := loader.Sync(context.Background()); err != nil { t.Fatal(err) }
+	store.mu.Lock()
+	store.jobs = []JobDefinition{persistentDefinition("1", "job", 2)}
+	store.mu.Unlock()
+	runtime.failReplace = "job"
+	if err := loader.Sync(context.Background()); err == nil { t.Fatal("replace failure was ignored") }
+	if loader.loaded["1"].Version != 1 { t.Fatalf("loaded = %#v", loader.loaded) }
 }
 
 func TestLoaderPrevalidatesBeforeRemovingOldVersion(t *testing.T) {
@@ -106,7 +138,9 @@ func TestLoaderPrevalidatesBeforeRemovingOldVersion(t *testing.T) {
 	if err := loader.Sync(context.Background()); err != nil { t.Fatal(err) }
 	bad := persistentDefinition("1", "job", 2)
 	bad.Schedule = Cron{Expr: "not a cron"}
+	store.mu.Lock()
 	store.jobs = []JobDefinition{bad}
+	store.mu.Unlock()
 	if err := loader.Sync(context.Background()); err == nil { t.Fatal("invalid cron was accepted") }
 	jobs := runtime.Jobs()
 	if len(jobs) != 1 || jobs[0].Name != "job" { t.Fatalf("old runtime job was lost: %#v", jobs) }
@@ -119,7 +153,9 @@ func TestLoaderAllowsNewIDToReuseReleasedName(t *testing.T) {
 	loader, err := NewLoader(store, persistentRegistry(t), runtime)
 	if err != nil { t.Fatal(err) }
 	if err := loader.Sync(context.Background()); err != nil { t.Fatal(err) }
+	store.mu.Lock()
 	store.jobs = []JobDefinition{persistentDefinition("new", "job", 1)}
+	store.mu.Unlock()
 	if err := loader.Sync(context.Background()); err != nil { t.Fatal(err) }
 	if _, exists := loader.loaded["old"]; exists { t.Fatal("old ID remained loaded") }
 	if loader.loaded["new"].Name != "job" { t.Fatalf("loaded = %#v", loader.loaded) }
