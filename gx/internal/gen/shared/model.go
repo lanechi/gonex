@@ -28,8 +28,13 @@ type Result struct {
 	Changes []Change
 }
 
-// Add records one planned generator change.
+// Add records one planned generator change. Paths are logical project paths,
+// so they always use forward slashes regardless of the host operating system.
 func (r *Result) Add(kind, path, detail string) {
+	path = filepath.ToSlash(filepath.Clean(path))
+	if path == "." {
+		path = ""
+	}
 	r.Changes = append(r.Changes, Change{Kind: kind, Path: path, Detail: detail})
 }
 
