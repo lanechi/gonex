@@ -48,3 +48,18 @@ func TestRestartHandoffCleanupContextIsIndependentAndBounded(t *testing.T) {
 		t.Fatalf("post-handoff cleanup deadline remaining=%s", remaining)
 	}
 }
+
+func TestRestartDetectsRequestContextOwnedByServer(t *testing.T) {
+	server := NewServer()
+	requestContext := context.WithValue(context.Background(), contextKey{}, &Context{server: server})
+	if !restartCalledFromServerRequest(requestContext, server) {
+		t.Fatal("server-owned request context was not detected")
+	}
+	if restartCalledFromServerRequest(context.Background(), server) {
+		t.Fatal("background context was treated as a server request")
+	}
+	other := NewServer()
+	if restartCalledFromServerRequest(requestContext, other) {
+		t.Fatal("request context from another server was treated as local")
+	}
+}
