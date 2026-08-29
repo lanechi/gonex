@@ -3,10 +3,10 @@ package scheduler
 import "sync"
 
 type overlapGate struct {
-	mu     sync.Mutex
-	policy OverlapPolicy
-	active int
-	queued bool
+	mu            sync.Mutex
+	policy        OverlapPolicy
+	active        int
+	queuedHandler func()
 }
 
 func (gate *overlapGate) run(handler func()) (executed, queued bool) {
@@ -19,8 +19,8 @@ func (gate *overlapGate) run(handler func()) (executed, queued bool) {
 		return true, false
 	}
 	if gate.active > 0 {
-		if gate.policy == QueueOne && !gate.queued {
-			gate.queued = true
+		if gate.policy == QueueOne && gate.queuedHandler == nil {
+			gate.queuedHandler = handler
 			gate.mu.Unlock()
 			return false, true
 		}
@@ -28,12 +28,14 @@ func (gate *overlapGate) run(handler func()) (executed, queued bool) {
 		return false, false
 	}
 	gate.active = 1
+	current := handler
 	gate.mu.Unlock()
 	for {
-		handler()
+		current()
 		gate.mu.Lock()
-		if gate.policy == QueueOne && gate.queued {
-			gate.queued = false
+		if gate.policy == QueueOne && gate.queuedHandler != nil {
+			current = gate.queuedHandler
+			gate.queuedHandler = nil
 			gate.mu.Unlock()
 			continue
 		}
@@ -59,7 +61,7 @@ func (gate *overlapGate) setPolicy(policy OverlapPolicy) {
 	gate.mu.Lock()
 	gate.policy = policy
 	if policy != QueueOne {
-		gate.queued = false
+		gate.queuedHandler = nil
 	}
 	gate.mu.Unlock()
 }
