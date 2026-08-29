@@ -1,8 +1,6 @@
 package router
 
-import (
-	"fmt"
-)
+import "fmt"
 
 // BindingError describes a request decoding failure without coupling this
 // package to the root server error type.
@@ -44,14 +42,11 @@ type FieldBinding struct {
 	File       string
 }
 
-// Binder executes the request binding plan compiled during route registration.
-// Fields is a compatibility snapshot for inspection; mutating it does not alter
-// the private runtime binding plan.
+// Binder executes the immutable request binding plan compiled during route
+// registration. Runtime configuration is supplied by the caller per request;
+// Binder itself contains no mutable request/server settings.
 type Binder struct {
-	Fields             []FieldBinding
-	MaxMultipartMemory int64
-	fields             []FieldBinding
-	hasQuery           bool
-	hasBindingRules    bool
-	hasValidateRules   bool
+	fields           []FieldBinding
+	hasBindingRules  bool
+	hasValidateRules bool
 }
