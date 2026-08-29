@@ -172,7 +172,7 @@ func (server *Server) Bind(controller any, middleware ...Middleware) error {
 	if err := server.Err(); err != nil {
 		return err
 	}
-	routes, err := scanController(controller)
+	routes, err := router.ScanController(controller)
 	if err != nil {
 		return err
 	}
@@ -210,6 +210,8 @@ func (server *Server) Name() string {
 
 // Address returns the configured listening address.
 func (server *Server) Address() string {
+	server.stateMu.RLock()
+	defer server.stateMu.RUnlock()
 	return server.address
 }
 
@@ -253,17 +255,22 @@ func (server *Server) RestartManager() RestartManager {
 
 // SetTemplateRoot configures and loads the server template directory.
 func (server *Server) SetTemplateRoot(root string) error {
+	server.settingsMu.Lock()
 	server.options.TemplateRoot = optional[string]{Value: root, Set: true}
+	server.settingsMu.Unlock()
 	return server.templates.SetRoot(root)
 }
 
 // SetTrustedProxies configures which proxies Gin may trust for client IP
-// resolution. Passing nil disables proxy trust.
+// resolution. Passing nil disables proxy trust. Proxy configuration is
+// serialized with route registration and startup because it mutates Gin.
 func (server *Server) SetTrustedProxies(proxies []string) error {
+	server.registrationMu.Lock()
+	defer server.registrationMu.Unlock()
 	if server.isRunning() {
 		return ErrServerRunning
 	}
-	return server.engine.SetTrustedProxies(proxies)
+	return server.engine.SetTrustedProxies(append([]string(nil), proxies...))
 }
 
 // SetAllowedHosts limits Host headers accepted by the HTTP server. An empty
@@ -408,12 +415,14 @@ func (server *Server) Run(address ...string) error {
 }
 
 func (server *Server) setAddress(address string) error {
-	if server.isRunning() {
-		return ErrServerRunning
-	}
 	address = strings.TrimSpace(address)
 	if address == "" {
 		return nil
+	}
+	server.stateMu.Lock()
+	defer server.stateMu.Unlock()
+	if server.running {
+		return ErrServerRunning
 	}
 	server.address = address
 	server.httpServer.Addr = address
