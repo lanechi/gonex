@@ -44,6 +44,35 @@ func safeProjectPath(root, relative string) (string, error) {
 	return path, nil
 }
 
+// validateRootPath applies the generator's no-symlink ownership rule through
+// an already-open project root. The root handle remains bound to the same
+// directory even if the process-visible root path is renamed concurrently.
+func validateRootPath(root *os.Root, relative string) error {
+	clean, err := cleanProjectRelative(relative)
+	if err != nil {
+		return err
+	}
+	current := ""
+	parts := strings.Split(clean, string(filepath.Separator))
+	for index, part := range parts {
+		current = filepath.Join(current, part)
+		info, err := root.Lstat(current)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("inspect path %q: %w", relative, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("path %q contains symlink", relative)
+		}
+		if index < len(parts)-1 && !info.IsDir() {
+			return fmt.Errorf("path %q contains non-directory parent", relative)
+		}
+	}
+	return nil
+}
+
 func projectRelativePath(root, path string) (string, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
