@@ -469,44 +469,32 @@ func (server *Server) logListening(tlsEnabled bool) {
 	)
 }
 
-// Shutdown gracefully stops the HTTP server.
+// Shutdown gracefully stops the HTTP server. All independent cleanup failures
+// are preserved so callers can diagnose partial shutdown instead of receiving
+// only the first error.
 func (server *Server) Shutdown(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	lifecycleErr := server.lifecycle.BeginShutdown(ctx)
-	shutdownErr := server.httpServer.Shutdown(ctx)
+	httpErr := server.httpServer.Shutdown(ctx)
+	if errors.Is(httpErr, http.ErrServerClosed) {
+		httpErr = nil
+	}
 	templateErr := server.templates.Close()
-	if errors.Is(shutdownErr, http.ErrServerClosed) {
-		shutdownErr = nil
-	}
-	if shutdownErr == nil {
-		shutdownErr = templateErr
-	}
+	var schedulerErr error
 	if server.scheduler != nil {
-		if schedulerErr := server.scheduler.Wait(ctx); shutdownErr == nil {
-			shutdownErr = schedulerErr
-		}
+		schedulerErr = server.scheduler.Wait(ctx)
 	}
-	if taskErr := server.lifecycle.Wait(ctx); shutdownErr == nil {
-		shutdownErr = taskErr
-	}
-	if stopErr := server.lifecycle.Stop(ctx); shutdownErr == nil {
-		shutdownErr = stopErr
-	}
+	taskErr := server.lifecycle.Wait(ctx)
+	stopErr := server.lifecycle.Stop(ctx)
 	var loggerErr error
 	if server.loggerOwned {
 		loggerErr = logging.Close(server.logger)
 	} else if !isNilInterface(server.logger) {
 		loggerErr = server.logger.Sync()
 	}
-	if shutdownErr == nil {
-		shutdownErr = loggerErr
-	}
-	if shutdownErr == nil {
-		shutdownErr = lifecycleErr
-	}
-	return shutdownErr
+	return errors.Join(lifecycleErr, httpErr, templateErr, schedulerErr, taskErr, stopErr, loggerErr)
 }
 
 // EnableOpenAPI enables or disables the interface documentation feature,
