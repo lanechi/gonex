@@ -44,11 +44,21 @@ func (manager *serverRestartManager) Restart(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	manager.mu.Lock()
 	if manager.running {
 		attempt := manager.attempt
 		manager.mu.Unlock()
 		return waitRestartAttempt(ctx, attempt)
+	}
+	// Cancellation may race with acquiring the serialization lock. Do not
+	// publish a new restart attempt, duplicate the listener, or spawn a child
+	// process once the caller has canceled the operation.
+	if err := ctx.Err(); err != nil {
+		manager.mu.Unlock()
+		return err
 	}
 	attempt := &restartAttempt{done: make(chan struct{})}
 	manager.running = true
@@ -77,6 +87,9 @@ func waitRestartAttempt(ctx context.Context, attempt *restartAttempt) error {
 }
 
 func (manager *serverRestartManager) restart(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	manager.server.listenerMu.RLock()
 	listener := manager.server.listener
 	manager.server.listenerMu.RUnlock()
@@ -100,6 +113,12 @@ func (manager *serverRestartManager) restart(ctx context.Context) error {
 	if err != nil {
 		_ = listenerFile.Close()
 		return fmt.Errorf("create restart readiness pipe: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		_ = listenerFile.Close()
+		_ = readyReader.Close()
+		_ = readyWriter.Close()
+		return err
 	}
 	processEnvironment := restartEnvironment()
 	processEnvironment = append(processEnvironment,
