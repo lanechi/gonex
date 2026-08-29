@@ -160,11 +160,12 @@ func WithEngine(engine *gin.Engine) Option {
 	}
 }
 
-// WithLogger replaces the server logger.
+// WithLogger replaces the server logger. Injected loggers remain caller-owned.
 func WithLogger(logger logging.Logger) Option {
 	return func(server *Server) {
-		if logger != nil {
+		if !isNilInterface(logger) {
 			server.logger = logger
+			server.loggerOwned = false
 			server.options.Logger = optional[logging.Logger]{Value: logger, Set: true}
 		}
 	}
@@ -212,7 +213,7 @@ func WithSchedulerOptions(options SchedulerOptions) Option {
 // WithConfig attaches an application configuration object to the server.
 func WithConfig(configuration Config) Option {
 	return func(server *Server) {
-		if configuration != nil {
+		if !isNilInterface(configuration) {
 			server.config = configuration
 			server.options.Config = optional[Config]{Value: configuration, Set: true}
 		}
@@ -257,7 +258,7 @@ func WithCORS(configuration CORSOptions) Option {
 // application intentionally accepts or replaces that documentation contract.
 func WithResponseEncoder(encoder ResponseEncoder) Option {
 	return func(server *Server) {
-		if encoder != nil {
+		if !isNilInterface(encoder) {
 			server.responseEncoder = encoder
 			server.openapiEnabled = false
 			server.options.OpenAPI = optional[OpenAPIOptions]{Value: OpenAPIOptions{Enabled: false}, Set: true}
@@ -359,10 +360,11 @@ func WithSwaggerPath(path string) Option {
 func WithTemplateRoot(root string) Option {
 	return func(server *Server) {
 		if root != "" {
-			server.options.TemplateRoot = optional[string]{Value: root, Set: true}
 			if err := server.templates.SetRoot(root); err != nil {
 				server.addInitializationError(fmt.Errorf("configure template root: %w", err))
+				return
 			}
+			server.options.TemplateRoot = optional[string]{Value: root, Set: true}
 		}
 	}
 }
