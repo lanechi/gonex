@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestRestartRejectsCanceledContextBeforeRuntimeInspection(t *testing.T) {
@@ -23,5 +24,27 @@ func TestRestartRejectsCanceledContextBeforeRuntimeInspection(t *testing.T) {
 	manager.mu.Unlock()
 	if running || attempt != nil {
 		t.Fatalf("canceled restart published runtime state: running=%v attempt=%v", running, attempt != nil)
+	}
+}
+
+func TestRestartHandoffCleanupContextIsIndependentAndBounded(t *testing.T) {
+	caller, cancelCaller := context.WithCancel(context.Background())
+	cancelCaller()
+	if !errors.Is(caller.Err(), context.Canceled) {
+		t.Fatal("test caller context was not canceled")
+	}
+
+	cleanup, cancelCleanup := restartHandoffCleanupContext(time.Second)
+	defer cancelCleanup()
+	if err := cleanup.Err(); err != nil {
+		t.Fatalf("post-handoff cleanup inherited caller cancellation: %v", err)
+	}
+	deadline, ok := cleanup.Deadline()
+	if !ok {
+		t.Fatal("post-handoff cleanup context has no deadline")
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 || remaining > time.Second {
+		t.Fatalf("post-handoff cleanup deadline remaining=%s", remaining)
 	}
 }
