@@ -29,6 +29,10 @@ type Lifecycle struct {
 	startedAttempt *phaseAttempt
 	shutdown       bool
 	shutdownOnce   bool
+	shutdownRunning bool
+	shutdownAttempt *phaseAttempt
+	stopRunning     bool
+	stopAttempt     *phaseAttempt
 	tasks          sync.WaitGroup
 	taskContext    context.Context
 	cancelTasks    context.CancelFunc
@@ -162,7 +166,8 @@ func (lifecycle *Lifecycle) Start(ctx context.Context) error {
 	return lifecycle.MarkStarted(ctx)
 }
 
-// BeginShutdown cancels tracked tasks and runs shutdown hooks once.
+// BeginShutdown cancels tracked tasks and runs shutdown hooks once. Concurrent
+// callers wait for the same shutdown attempt and receive the same result.
 func (lifecycle *Lifecycle) BeginShutdown(ctx context.Context) error {
 	if lifecycle == nil {
 		return nil
@@ -171,26 +176,53 @@ func (lifecycle *Lifecycle) BeginShutdown(ctx context.Context) error {
 		ctx = context.Background()
 	}
 	lifecycle.mu.Lock()
-	if lifecycle.shutdownOnce {
+	if lifecycle.shutdownRunning {
+		attempt := lifecycle.shutdownAttempt
 		lifecycle.mu.Unlock()
-		return nil
+		select {
+		case <-attempt.done:
+			return attempt.err
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
+	if lifecycle.shutdownOnce {
+		attempt := lifecycle.shutdownAttempt
+		if attempt == nil {
+			lifecycle.mu.Unlock()
+			return nil
+		}
+		lifecycle.mu.Unlock()
+		<-attempt.done
+		return attempt.err
+	}
+	attempt := &phaseAttempt{done: make(chan struct{})}
 	lifecycle.shutdownOnce = true
+	lifecycle.shutdownRunning = true
+	lifecycle.shutdownAttempt = attempt
 	hooks := append([]Hook(nil), lifecycle.onShutdown...)
 	if lifecycle.cancelTasks != nil {
 		lifecycle.cancelTasks()
 	}
 	lifecycle.mu.Unlock()
+
 	var firstError error
 	for _, hook := range hooks {
 		if err := hook(ctx); err != nil && firstError == nil {
 			firstError = err
 		}
 	}
+
+	lifecycle.mu.Lock()
+	lifecycle.shutdownRunning = false
+	attempt.err = firstError
+	close(attempt.done)
+	lifecycle.mu.Unlock()
 	return firstError
 }
 
-// Stop runs final lifecycle hooks once.
+// Stop runs final lifecycle hooks once, after the shutdown phase has completed.
+// Concurrent callers wait for the same stop attempt.
 func (lifecycle *Lifecycle) Stop(ctx context.Context) error {
 	if lifecycle == nil {
 		return nil
@@ -199,23 +231,47 @@ func (lifecycle *Lifecycle) Stop(ctx context.Context) error {
 		ctx = context.Background()
 	}
 	shutdownErr := lifecycle.BeginShutdown(ctx)
+
 	lifecycle.mu.Lock()
-	if lifecycle.shutdown {
+	if lifecycle.stopRunning {
+		attempt := lifecycle.stopAttempt
 		lifecycle.mu.Unlock()
-		return nil
+		select {
+		case <-attempt.done:
+			return attempt.err
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
-	lifecycle.shutdown = true
+	if lifecycle.shutdown {
+		attempt := lifecycle.stopAttempt
+		if attempt == nil {
+			lifecycle.mu.Unlock()
+			return shutdownErr
+		}
+		lifecycle.mu.Unlock()
+		<-attempt.done
+		return attempt.err
+	}
+	attempt := &phaseAttempt{done: make(chan struct{})}
+	lifecycle.stopRunning = true
+	lifecycle.stopAttempt = attempt
 	hooks := append([]Hook(nil), lifecycle.onStop...)
 	lifecycle.mu.Unlock()
-	var firstError error
+
+	firstError := shutdownErr
 	for _, hook := range hooks {
 		if err := hook(ctx); err != nil && firstError == nil {
 			firstError = err
 		}
 	}
-	if firstError == nil {
-		firstError = shutdownErr
-	}
+
+	lifecycle.mu.Lock()
+	lifecycle.shutdown = true
+	lifecycle.stopRunning = false
+	attempt.err = firstError
+	close(attempt.done)
+	lifecycle.mu.Unlock()
 	return firstError
 }
 
