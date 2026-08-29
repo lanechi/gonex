@@ -147,6 +147,7 @@ func TestInvalidConfigValuesFailInitialization(t *testing.T) {
 		contains string
 	}{
 		{"logger.level", "not-a-level", "logger"},
+		{"server.shutdownTimeout", "0s", "shutdownTimeout"},
 		{"session.storage.type", "cookie", "secret"},
 		{"session.storage.type", "unknown", "session.storage.type"},
 		{"session.sameSite", "invalid", "SameSite"},
