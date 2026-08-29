@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"time"
 )
@@ -313,9 +314,81 @@ func (storage *CookieStorage) sign(value []byte) []byte {
 func cloneValues(values map[string]any) map[string]any {
 	clone := make(map[string]any, len(values))
 	for key, value := range values {
-		clone[key] = value
+		clone[key] = cloneSessionValue(reflect.ValueOf(value))
 	}
 	return clone
+}
+
+func cloneSessionValue(value reflect.Value) any {
+	if !value.IsValid() {
+		return nil
+	}
+	switch value.Kind() {
+	case reflect.Interface:
+		if value.IsNil() {
+			return nil
+		}
+		return cloneSessionValue(value.Elem())
+	case reflect.Pointer:
+		if value.IsNil() {
+			return reflect.Zero(value.Type()).Interface()
+		}
+		clone := reflect.New(value.Type().Elem())
+		cloned := reflect.ValueOf(cloneSessionValue(value.Elem()))
+		if cloned.IsValid() && cloned.Type().AssignableTo(value.Type().Elem()) {
+			clone.Elem().Set(cloned)
+		} else {
+			clone.Elem().Set(value.Elem())
+		}
+		return clone.Interface()
+	case reflect.Map:
+		if value.IsNil() {
+			return reflect.Zero(value.Type()).Interface()
+		}
+		clone := reflect.MakeMapWithSize(value.Type(), value.Len())
+		iterator := value.MapRange()
+		for iterator.Next() {
+			mapValue := iterator.Value()
+			clonedAny := cloneSessionValue(mapValue)
+			cloned := reflect.ValueOf(clonedAny)
+			if !cloned.IsValid() {
+				cloned = reflect.Zero(mapValue.Type())
+			} else if !cloned.Type().AssignableTo(mapValue.Type()) {
+				cloned = mapValue
+			}
+			clone.SetMapIndex(iterator.Key(), cloned)
+		}
+		return clone.Interface()
+	case reflect.Slice:
+		if value.IsNil() {
+			return reflect.Zero(value.Type()).Interface()
+		}
+		clone := reflect.MakeSlice(value.Type(), value.Len(), value.Len())
+		for index := 0; index < value.Len(); index++ {
+			clonedAny := cloneSessionValue(value.Index(index))
+			cloned := reflect.ValueOf(clonedAny)
+			if cloned.IsValid() && cloned.Type().AssignableTo(value.Index(index).Type()) {
+				clone.Index(index).Set(cloned)
+			} else {
+				clone.Index(index).Set(value.Index(index))
+			}
+		}
+		return clone.Interface()
+	case reflect.Array:
+		clone := reflect.New(value.Type()).Elem()
+		for index := 0; index < value.Len(); index++ {
+			clonedAny := cloneSessionValue(value.Index(index))
+			cloned := reflect.ValueOf(clonedAny)
+			if cloned.IsValid() && cloned.Type().AssignableTo(value.Index(index).Type()) {
+				clone.Index(index).Set(cloned)
+			} else {
+				clone.Index(index).Set(value.Index(index))
+			}
+		}
+		return clone.Interface()
+	default:
+		return value.Interface()
+	}
 }
 
 // NewID returns a cryptographically random identifier suitable for sessions
