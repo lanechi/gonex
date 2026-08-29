@@ -22,6 +22,8 @@ var ErrServerRunning = errors.New("server is already running")
 
 var ErrRestartInProgress = errors.New("server restart is already in progress")
 
+var ErrRestartHandedOff = errors.New("server restart handoff already completed")
+
 // RestartManager is the platform boundary for zero-downtime process restart.
 // Implementations may coordinate listener FD inheritance and readiness with a
 // supervisor without coupling those concerns to the Server core.
@@ -35,15 +37,18 @@ type restartAttempt struct {
 }
 
 type serverRestartManager struct {
-	server  *Server
-	mu      sync.Mutex
-	running bool
-	attempt *restartAttempt
+	server    *Server
+	mu        sync.Mutex
+	running   bool
+	handedOff bool
+	attempt   *restartAttempt
 }
 
 // Restart serializes process handoff. Concurrent or reentrant restart requests
 // return ErrRestartInProgress instead of waiting, which prevents shutdown hooks
-// from deadlocking if they accidentally request another restart.
+// from deadlocking if they accidentally request another restart. Once a child
+// has reported ready, that ownership handoff is terminal for the parent and
+// further restart attempts return ErrRestartHandedOff.
 func (manager *serverRestartManager) Restart(ctx context.Context) error {
 	if manager == nil || manager.server == nil {
 		return ErrGracefulRestartUnsupported
@@ -55,6 +60,10 @@ func (manager *serverRestartManager) Restart(ctx context.Context) error {
 		return err
 	}
 	manager.mu.Lock()
+	if manager.handedOff {
+		manager.mu.Unlock()
+		return ErrRestartHandedOff
+	}
 	if manager.running {
 		manager.mu.Unlock()
 		return ErrRestartInProgress
@@ -170,7 +179,11 @@ func (manager *serverRestartManager) restart(ctx context.Context) error {
 	// already closed the parent's listener. The caller context no longer owns
 	// this irreversible handoff either: cancellation after ready must not leave
 	// both parent and child serving indefinitely, so cleanup switches to its own
-	// bounded background context.
+	// bounded background context. Mark the parent terminal before returning so a
+	// second restart cannot spawn another replacement during cleanup.
+	manager.mu.Lock()
+	manager.handedOff = true
+	manager.mu.Unlock()
 	go func() { _, _ = process.Wait() }()
 	if restartCalledFromServerRequest(ctx, manager.server) {
 		// A request handler cannot synchronously wait for Server.Shutdown: the
