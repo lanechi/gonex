@@ -211,7 +211,15 @@ func typeDeclarations(pkg *types.Package) []string {
 		case *types.Func:
 			declarations = append(declarations, "func "+name+qualified(object.Type()))
 		case *types.TypeName:
-			declarations = append(declarations, fmt.Sprintf("type %s %s", name, qualified(object.Type().Underlying())))
+			typeName := object.Type()
+			if object.IsAlias() {
+				declarations = append(declarations, fmt.Sprintf("type %s = %s", name, qualified(typeName)))
+			} else {
+				declarations = append(declarations, fmt.Sprintf("type %s %s", name, qualified(typeName.Underlying())))
+				if named, ok := typeName.(*types.Named); ok && named.TypeParams() != nil {
+					declarations = append(declarations, fmt.Sprintf("typeparams %s %s", name, formatTypeParams(named.TypeParams(), qualified)))
+				}
+			}
 			if structure, ok := object.Type().Underlying().(*types.Struct); ok {
 				for index := 0; index < structure.NumFields(); index++ {
 					field := structure.Field(index)
@@ -232,6 +240,15 @@ func typeDeclarations(pkg *types.Package) []string {
 	}
 	sort.Strings(declarations)
 	return compactDeclarations(declarations)
+}
+
+func formatTypeParams(params *types.TypeParamList, qualified func(types.Type) string) string {
+	var values []string
+	for index := 0; index < params.Len(); index++ {
+		param := params.At(index)
+		values = append(values, param.Obj().Name()+" "+qualified(param.Constraint()))
+	}
+	return strings.Join(values, ", ")
 }
 
 func compactDeclarations(declarations []string) []string {
@@ -269,6 +286,32 @@ func TestPublicAPIFreezeDetectorTracksSemanticMutations(t *testing.T) {
 	mutated := strings.Join(typeDeclarations(makePackage(`package fixture; const Value = 2; var State int; type Record struct { Field string }; func (Record) Act(int) error { return nil }`)), "\n")
 	if baseline == mutated {
 		t.Fatal("semantic API detector missed constant, variable, field, or method mutation")
+	}
+}
+
+func TestPublicAPIFreezeDetectorTracksAliasesAndGenericConstraints(t *testing.T) {
+	makePackage := func(source string) *types.Package {
+		t.Helper()
+		fileSet := token.NewFileSet()
+		file, err := parser.ParseFile(fileSet, "fixture.go", source, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pkg, err := (&types.Config{}).Check("fixture", fileSet, []*ast.File{file}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	}
+	alias := strings.Join(typeDeclarations(makePackage(`package fixture; type Base struct{}; type Alias = Base`)), "\n")
+	defined := strings.Join(typeDeclarations(makePackage(`package fixture; type Base struct{}; type Alias Base`)), "\n")
+	if alias == defined {
+		t.Fatal("API detector missed alias/defined type mutation")
+	}
+	anyConstraint := strings.Join(typeDeclarations(makePackage(`package fixture; type Value[T any] struct{}`)), "\n")
+	comparableConstraint := strings.Join(typeDeclarations(makePackage(`package fixture; type Value[T comparable] struct{}`)), "\n")
+	if anyConstraint == comparableConstraint {
+		t.Fatal("API detector missed generic constraint mutation")
 	}
 }
 

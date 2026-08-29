@@ -14,7 +14,6 @@ var (
 // RouteRuntime contains objects needed only to execute a registered route.
 // Documentation and route snapshots should use RouteMetadata instead.
 type RouteRuntime struct {
-	Controller  any
 	MethodValue reflect.Value
 	Binder      *Binder
 }
@@ -78,7 +77,7 @@ func ScanController(controller any) ([]Definition, error) {
 		metadata.Action = methodName
 		routes = append(routes, Definition{
 			Metadata: metadata,
-			Runtime:  RouteRuntime{Controller: controller, MethodValue: method, Binder: binder},
+			Runtime:  RouteRuntime{MethodValue: method, Binder: binder},
 		})
 	}
 	if len(routes) == 0 {

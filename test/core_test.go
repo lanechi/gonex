@@ -27,7 +27,7 @@ func TestServerBindAndServe(t *testing.T) {
 		t.Fatalf("response: status=%d body=%s", response.Code, response.Body.String())
 	}
 	routes := server.Routes()
-	if len(routes) != 1 || routes[0].Metadata.Method != "GET" || routes[0].Metadata.Path != "/hello" {
+	if len(routes) != 1 || routes[0].Method != "GET" || routes[0].Path != "/hello" {
 		t.Fatalf("routes = %#v", routes)
 	}
 	if !strings.Contains(server.RouteTable(), "helloController.Hello") {
@@ -66,12 +66,12 @@ func TestBindRejectsInvalidAndDuplicateRoutes(t *testing.T) {
 
 func TestRouteRegistrySnapshotAndOpenAPIPath(t *testing.T) {
 	registry := router.NewRegistry()
-	if err := registry.Register(router.Definition{Metadata: router.RouteMetadata{Method: http.MethodGet, Path: "/users/:id"}}); err != nil {
+	if err := registry.Register(router.RouteMetadata{Method: http.MethodGet, Path: "/users/:id"}); err != nil {
 		t.Fatal(err)
 	}
 	routes := registry.List()
-	routes[0].Metadata.Path = "/changed"
-	if registry.List()[0].Metadata.Path != "/users/:id" {
+	routes[0].Path = "/changed"
+	if registry.List()[0].Path != "/users/:id" {
 		t.Fatal("route registry returned a mutable route snapshot")
 	}
 	server := ghttp.NewServer()
@@ -97,7 +97,7 @@ func TestGroupBindAndMiddleware(t *testing.T) {
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"message":"hello"`) || !called {
 		t.Fatalf("group response: status=%d called=%v body=%s", response.Code, called, response.Body.String())
 	}
-	if routes := server.Routes(); len(routes) != 1 || routes[0].Metadata.Path != "/api/hello" {
+	if routes := server.Routes(); len(routes) != 1 || routes[0].Path != "/api/hello" {
 		t.Fatalf("group routes = %#v", routes)
 	}
 }
@@ -127,7 +127,7 @@ func TestGroupBindValidatesPathBindingsAfterPrefix(t *testing.T) {
 		t.Fatalf("group path binding: status=%d body=%s", response.Code, response.Body.String())
 	}
 	routes := server.Routes()
-	if len(routes) != 1 || routes[0].Metadata.Path != "/tenants/:tenant/items" {
+	if len(routes) != 1 || routes[0].Path != "/tenants/:tenant/items" {
 		t.Fatalf("group path route = %#v", routes)
 	}
 }

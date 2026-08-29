@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // Transaction stages generated files below Root and publishes them on Commit.
@@ -15,6 +14,7 @@ type Transaction struct {
 	stage   string
 	backup  string
 	deletes []string
+	writes  map[string]struct{}
 	open    bool
 }
 
@@ -25,8 +25,16 @@ func (transaction *Transaction) Delete(relative string) error {
 		return fmt.Errorf("file transaction is closed")
 	}
 	clean := filepath.Clean(relative)
-	if filepath.IsAbs(relative) || clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("transaction path %q escapes project root", relative)
+	if _, err := safeProjectPath(transaction.root, clean); err != nil {
+		return fmt.Errorf("transaction path %q: %w", relative, err)
+	}
+	if _, exists := transaction.writes[clean]; exists {
+		return fmt.Errorf("transaction path %q has already been written", relative)
+	}
+	for _, path := range transaction.deletes {
+		if path == clean {
+			return fmt.Errorf("transaction path %q has already been deleted", relative)
+		}
 	}
 	transaction.deletes = append(transaction.deletes, clean)
 	return nil
@@ -42,7 +50,7 @@ func NewTransaction(root string) (*Transaction, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create transaction staging: %w", err)
 	}
-	return &Transaction{root: root, stage: stage, open: true}, nil
+	return &Transaction{root: root, stage: stage, open: true, writes: make(map[string]struct{})}, nil
 }
 
 // Write stages content at a project-relative path. Absolute paths and path
@@ -52,8 +60,19 @@ func (transaction *Transaction) Write(relative string, content []byte, permissio
 		return fmt.Errorf("file transaction is closed")
 	}
 	clean := filepath.Clean(relative)
-	if filepath.IsAbs(relative) || clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("transaction path %q escapes project root", relative)
+	if _, err := safeProjectPath(transaction.root, clean); err != nil {
+		return fmt.Errorf("transaction path %q: %w", relative, err)
+	}
+	if info, err := os.Stat(filepath.Join(transaction.root, clean)); err == nil && info.IsDir() {
+		return fmt.Errorf("transaction path %q is an existing directory", relative)
+	}
+	if _, exists := transaction.writes[clean]; exists {
+		return fmt.Errorf("transaction path %q has already been written", relative)
+	}
+	for _, path := range transaction.deletes {
+		if path == clean {
+			return fmt.Errorf("transaction path %q is both written and deleted", relative)
+		}
 	}
 	path := filepath.Join(transaction.stage, clean)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -65,6 +84,7 @@ func (transaction *Transaction) Write(relative string, content []byte, permissio
 	if err := os.WriteFile(path, content, permission); err != nil {
 		return fmt.Errorf("stage %s: %w", relative, err)
 	}
+	transaction.writes[clean] = struct{}{}
 	return nil
 }
 

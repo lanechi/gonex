@@ -20,7 +20,7 @@ const (
 func WithMode(mode string) Option {
 	return func(server *Server) {
 		server.mode = strings.TrimSpace(mode)
-		server.options.Mode = Optional[string]{Value: mode, Set: true}
+		server.options.Mode = optional[string]{Value: mode, Set: true}
 	}
 }
 

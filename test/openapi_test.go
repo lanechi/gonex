@@ -44,8 +44,8 @@ func TestOpenAPIUsesMetadataBindingContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	routes[0].Runtime.Binder = nil
-	operation := openapi.Generate("metadata", routes).Paths["/upload"]["post"]
+	routeMetadata := routes[0].Metadata
+	operation := openapi.Generate("metadata", []router.RouteMetadata{routeMetadata}).Paths["/upload"]["post"]
 	content := operation.RequestBody["content"].(map[string]any)
 	if _, ok := content["multipart/form-data"]; !ok {
 		t.Fatalf("OpenAPI used runtime binder instead of metadata: %#v", content)

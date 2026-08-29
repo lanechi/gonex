@@ -7,8 +7,7 @@ import (
 )
 
 // parametersForRoute renders non-body bindings as OpenAPI parameters.
-func parametersForRoute(route router.Definition) []map[string]any {
-	metadata := route.Metadata
+func parametersForRoute(metadata router.RouteMetadata) []map[string]any {
 	if metadata.RequestType == nil {
 		return nil
 	}

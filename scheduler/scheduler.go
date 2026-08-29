@@ -450,8 +450,9 @@ func (manager *manager) execute(record *jobRecord, engineContext context.Context
 	}()
 
 	handler := record.definition.Handler
-	for _, middleware := range manager.middlewareSnapshot(record.definition.Middleware) {
-		handler = middleware(handler)
+	middlewares := manager.middlewareSnapshot(record.definition.Middleware)
+	for index := len(middlewares) - 1; index >= 0; index-- {
+		handler = middlewares[index](handler)
 	}
 	if err := handler(ctx); err != nil {
 		logger.Error(ctx, "scheduler job failed", logging.String("job", record.definition.Name), logging.Duration("duration", time.Since(started)), logging.Error(err))
@@ -484,23 +485,6 @@ func (manager *manager) jobContext(engineContext context.Context, timeout time.D
 		stopParent()
 		cancelParent()
 	}
-}
-
-func (manager *manager) middlewareSnapshot(jobMiddleware []Middleware) []Middleware {
-	manager.mu.RLock()
-	middleware := append([]Middleware(nil), manager.middleware...)
-	manager.mu.RUnlock()
-	return append(middleware, jobMiddleware...)
-}
-
-func (manager *manager) currentLogger() logging.Logger {
-	manager.mu.RLock()
-	logger := manager.logger
-	manager.mu.RUnlock()
-	if logger == nil {
-		return logging.NewNopLogger()
-	}
-	return logger
 }
 
 func (manager *manager) installLocked(record *jobRecord) error {
@@ -553,6 +537,9 @@ func validateJob(job Job, location *time.Location) error {
 			return fmt.Errorf("scheduler job %q interval must be positive", job.Name)
 		}
 	case Once:
+		if job.RunImmediately {
+			return fmt.Errorf("scheduler job %q: Once cannot use RunImmediately", job.Name)
+		}
 		if schedule.At.IsZero() || !schedule.At.After(time.Now()) {
 			return fmt.Errorf("scheduler job %q must run at a future time", job.Name)
 		}
@@ -560,77 +547,4 @@ func validateJob(job Job, location *time.Location) error {
 		return fmt.Errorf("scheduler job %q has unsupported schedule %T", job.Name, job.Schedule)
 	}
 	return nil
-}
-
-func scheduleDefinition(schedule Schedule) (gocron.JobDefinition, error) {
-	switch value := schedule.(type) {
-	case Cron:
-		return gocron.CronJob(value.Expr, cronHasSeconds(value.Expr)), nil
-	case Every:
-		return gocron.DurationJob(value.Duration), nil
-	case Once:
-		return gocron.OneTimeJob(gocron.OneTimeJobStartDateTime(value.At)), nil
-	default:
-		return nil, fmt.Errorf("unsupported scheduler schedule %T", schedule)
-	}
-}
-
-func cronHasSeconds(expression string) bool {
-	fields := strings.Fields(expression)
-	if len(fields) > 0 && (strings.HasPrefix(fields[0], "TZ=") || strings.HasPrefix(fields[0], "CRON_TZ=")) {
-		fields = fields[1:]
-	}
-	return len(fields) == 6
-}
-
-type overlapGate struct {
-	mu     sync.Mutex
-	policy OverlapPolicy
-	active int
-	queued bool
-}
-
-func (gate *overlapGate) run(handler func()) (executed, queued bool) {
-	gate.mu.Lock()
-	if gate.policy == AllowOverlap {
-		gate.active++
-		gate.mu.Unlock()
-		defer func() {
-			gate.mu.Lock()
-			gate.active--
-			gate.mu.Unlock()
-		}()
-		handler()
-		return true, false
-	}
-	if gate.active > 0 {
-		if gate.policy == QueueOne && !gate.queued {
-			gate.queued = true
-			gate.mu.Unlock()
-			return false, true
-		}
-		gate.mu.Unlock()
-		return false, false
-	}
-	gate.active = 1
-	gate.mu.Unlock()
-
-	for {
-		handler()
-		gate.mu.Lock()
-		if gate.policy == QueueOne && gate.queued {
-			gate.queued = false
-			gate.mu.Unlock()
-			continue
-		}
-		gate.active = 0
-		gate.mu.Unlock()
-		return true, false
-	}
-}
-
-func (gate *overlapGate) isRunning() bool {
-	gate.mu.Lock()
-	defer gate.mu.Unlock()
-	return gate.active > 0
 }

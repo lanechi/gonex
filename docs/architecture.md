@@ -216,7 +216,7 @@ array、interface 和 struct。`gx` 默认生成指针响应签名，但运行�
 
 ## 7. OpenAPI 设计
 
-路由定义是 OpenAPI 的输入，而不是反向从 Gin handlers 推断。这样请求标签、校验规则、Summary、
+注册阶段的 Definition 同时包含 metadata/runtime，但 Registry、Server 路由快照和 OpenAPI 只接收 RouteMetadata；Binder、MethodValue 和 Controller 实例只留在 HTTP 执行链。路由定义是 OpenAPI 的输入，而不是反向从 Gin handlers 推断。这样请求标签、校验规则、Summary、
 Tags 与实际绑定契约来自同一类型信息。
 
 OpenAPI JSON 和 Swagger UI 共用 `openapiEnabled` 总开关；默认路径分别为 `/openapi.json` 和

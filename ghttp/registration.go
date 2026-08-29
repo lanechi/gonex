@@ -28,6 +28,13 @@ func (server *Server) registerRouteDefinitions(routes []router.Definition, middl
 	if err := server.validateRouteRegistration(routes); err != nil {
 		return err
 	}
+	metadata := make([]router.RouteMetadata, len(routes))
+	for index, route := range routes {
+		metadata[index] = route.Metadata
+	}
+	if err := server.registry.Validate(metadata...); err != nil {
+		return fmt.Errorf("route registry: %w", err)
+	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			err = fmt.Errorf("register Gin route: %v", recovered)
@@ -47,7 +54,7 @@ func (server *Server) registerRouteDefinitions(routes []router.Definition, middl
 		handlers = append(handlers, server.handlerFor(route))
 		server.engine.Handle(metadata.Method, metadata.Path, handlers...)
 	}
-	if err := server.registry.Register(routes...); err != nil {
+	if err := server.registry.Register(metadata...); err != nil {
 		return err
 	}
 	server.routesRegistered = true

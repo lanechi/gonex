@@ -11,11 +11,11 @@ import (
 // the stable package entry point.
 type routeDocumentationStage struct{}
 
-func (routeDocumentationStage) Parameters(route router.Definition) []map[string]any {
+func (routeDocumentationStage) Parameters(route router.RouteMetadata) []map[string]any {
 	return parametersForRoute(route)
 }
 
-func (routeDocumentationStage) RequestBody(route router.Definition) map[string]any {
+func (routeDocumentationStage) RequestBody(route router.RouteMetadata) map[string]any {
 	return requestBodyForRoute(route)
 }
 

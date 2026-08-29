@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // DirectorySwap describes a staged directory and its project-relative target.
@@ -37,6 +36,25 @@ func BeginDirectoryTransaction(root string, swaps ...DirectorySwap) (*DirectoryT
 	if err != nil {
 		return nil, fmt.Errorf("resolve directory transaction root: %w", err)
 	}
+	targets := make(map[string]struct{}, len(swaps))
+	for index, swap := range swaps {
+		target := filepath.Clean(swap.Target)
+		if _, err := safeProjectPath(root, target); err != nil {
+			return nil, fmt.Errorf("invalid directory swap %d: %w", index, err)
+		}
+		if _, exists := targets[target]; exists {
+			return nil, fmt.Errorf("duplicate directory target %q", swap.Target)
+		}
+		targets[target] = struct{}{}
+		if filepath.IsAbs(swap.Stage) {
+			info, statErr := os.Lstat(swap.Stage)
+			if statErr != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+				return nil, fmt.Errorf("invalid directory stage %q", swap.Stage)
+			}
+		} else {
+			return nil, fmt.Errorf("invalid directory stage %q", swap.Stage)
+		}
+	}
 	backupRoot, err := os.MkdirTemp(root, ".gx-directory-backup-*")
 	if err != nil {
 		return nil, fmt.Errorf("create directory backup: %w", err)
@@ -45,10 +63,6 @@ func BeginDirectoryTransaction(root string, swaps ...DirectorySwap) (*DirectoryT
 	for index, swap := range swaps {
 		target := filepath.Clean(swap.Target)
 		stage := filepath.Clean(swap.Stage)
-		if filepath.IsAbs(swap.Target) || target == "." || target == ".." || strings.HasPrefix(target, ".."+string(filepath.Separator)) || filepath.IsAbs(stage) == false {
-			_ = os.RemoveAll(backupRoot)
-			return nil, fmt.Errorf("invalid directory swap %d", index)
-		}
 		item := directoryTarget{DirectorySwap: DirectorySwap{Stage: stage, Target: filepath.Join(root, target)}, backup: filepath.Join(backupRoot, fmt.Sprintf("%d", index))}
 		if _, statErr := os.Stat(item.Target); statErr == nil {
 			if err := os.Rename(item.Target, item.backup); err != nil {

@@ -70,3 +70,47 @@ func TestTransactionCommitsWritesAndDeletesTogether(t *testing.T) {
 		t.Fatalf("new file = %q, err = %v", content, err)
 	}
 }
+
+func TestTransactionRejectsSymlinkAndConflictingOperations(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "link")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	transaction, err := NewTransaction(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := transaction.Write("link/file.go", []byte("bad"), 0o644); err == nil {
+		t.Fatal("symlink escape was accepted")
+	}
+	if err := transaction.Write("same.go", []byte("one"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := transaction.Write("same.go", []byte("two"), 0o644); err == nil {
+		t.Fatal("duplicate write was accepted")
+	}
+	if err := transaction.Delete("same.go"); err == nil {
+		t.Fatal("write/delete conflict was accepted")
+	}
+	if err := transaction.Delete("other.go"); err != nil {
+		t.Fatal(err)
+	}
+	if err := transaction.Delete("other.go"); err == nil {
+		t.Fatal("duplicate delete was accepted")
+	}
+}
+
+func TestTransactionRejectsExistingDirectoryWrite(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "folder"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	transaction, err := NewTransaction(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := transaction.Write("folder", []byte("bad"), 0o644); err == nil {
+		t.Fatal("write to directory was accepted")
+	}
+}

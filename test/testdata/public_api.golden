@@ -58,9 +58,9 @@ func Cfgfunc() *github.com/lanechi/gonex/config.ViperConfig
 func Ctxfunc(ctx context.Context) *github.com/lanechi/gonex/ghttp.Context
 func Serverfunc(names ...string) *github.com/lanechi/gonex/ghttp.Server
 func SetLoggerfunc(logger github.com/lanechi/gonex/logging.Logger) error
-type List []github.com/lanechi/gonex/g.Map
-type Map map[string]any
-type Meta struct{}
+type List = github.com/lanechi/gonex/g.List
+type Map = github.com/lanechi/gonex/g.Map
+type Meta = github.com/lanechi/gonex/g.Meta
 PACKAGE github.com/lanechi/gonex/ghttp
 const DebugMode untyped string = "debug"
 const Named untyped string = "[GIN-debug]"
@@ -94,8 +94,6 @@ field Error.Message string ""
 field OpenAPIOptions.DocumentPath string ""
 field OpenAPIOptions.Enabled bool ""
 field OpenAPIOptions.SwaggerPath string ""
-field Optional.Set bool ""
-field Optional.Value T ""
 field Response.Code int "json:\"code\""
 field Response.Data any "json:\"data,omitempty\""
 field Response.Details any "json:\"details,omitempty\""
@@ -218,7 +216,7 @@ method *github.com/lanechi/gonex/ghttp.Server RestartManagerfunc() github.com/la
 method *github.com/lanechi/gonex/ghttp.Server Restartfunc(ctx context.Context) error
 method *github.com/lanechi/gonex/ghttp.Server RouteTablefunc() string
 method *github.com/lanechi/gonex/ghttp.Server Routefunc(method string, path string) *github.com/lanechi/gonex/ghttp.Route
-method *github.com/lanechi/gonex/ghttp.Server Routesfunc() []github.com/lanechi/gonex/router.Definition
+method *github.com/lanechi/gonex/ghttp.Server Routesfunc() []github.com/lanechi/gonex/router.RouteMetadata
 method *github.com/lanechi/gonex/ghttp.Server RunContextfunc(ctx context.Context) error
 method *github.com/lanechi/gonex/ghttp.Server RunTLSfunc(certFile string, keyFile string) error
 method *github.com/lanechi/gonex/ghttp.Server Runfunc(address ...string) error
@@ -263,7 +261,6 @@ type LifecycleHook func(context.Context) error
 type Middleware func(*github.com/gin-gonic/gin.Context)
 type OpenAPIOptions struct{Enabled bool; DocumentPath string; SwaggerPath string}
 type Option func(*github.com/lanechi/gonex/ghttp.Server)
-type Optional struct{Value T; Set bool}
 type Response struct{Code int "json:\"code\""; Message string "json:\"message\""; Data any "json:\"data,omitempty\""; Details any "json:\"details,omitempty\""}
 type ResponseEncoder interface{Encode(ctx *github.com/lanechi/gonex/ghttp.Context, data any) error}
 type RestartManager interface{Restart(ctx context.Context) error}
@@ -398,7 +395,7 @@ field Operation.Security []map[string][]string "json:\"security,omitempty\""
 field Operation.Summary string "json:\"summary,omitempty\""
 field Operation.Tags []string "json:\"tags,omitempty\""
 func Clonefunc(document github.com/lanechi/gonex/openapi.Document) github.com/lanechi/gonex/openapi.Document
-func Generatefunc(name string, routes []github.com/lanechi/gonex/router.Definition) github.com/lanechi/gonex/openapi.Document
+func Generatefunc(name string, routes []github.com/lanechi/gonex/router.RouteMetadata) github.com/lanechi/gonex/openapi.Document
 func Pathfunc(path string) string
 func RenderSwaggerHTMLfunc(specURL string) []byte
 func SetSwaggerTemplatefunc(template string)
@@ -439,7 +436,6 @@ field RouteMetadata.Security []string ""
 field RouteMetadata.Summary string ""
 field RouteMetadata.Tags []string ""
 field RouteRuntime.Binder *github.com/lanechi/gonex/router.Binder ""
-field RouteRuntime.Controller any ""
 field RouteRuntime.MethodValue reflect.Value ""
 func NewBinderfunc(requestType reflect.Type) (*github.com/lanechi/gonex/router.Binder, error)
 func NewRegistryfunc() *github.com/lanechi/gonex/router.Registry
@@ -451,22 +447,32 @@ method *github.com/lanechi/gonex/router.Binder HasBindingRulesfunc() bool
 method *github.com/lanechi/gonex/router.Binder HasValidateRulesfunc() bool
 method *github.com/lanechi/gonex/router.BindingError Errorfunc() string
 method *github.com/lanechi/gonex/router.BindingError Unwrapfunc() error
-method *github.com/lanechi/gonex/router.Registry Listfunc() []github.com/lanechi/gonex/router.Definition
-method *github.com/lanechi/gonex/router.Registry Registerfunc(routes ...github.com/lanechi/gonex/router.Definition) error
+method *github.com/lanechi/gonex/router.Registry Listfunc() []github.com/lanechi/gonex/router.RouteMetadata
+method *github.com/lanechi/gonex/router.Registry Registerfunc(routes ...github.com/lanechi/gonex/router.RouteMetadata) error
 method *github.com/lanechi/gonex/router.Registry RouteTablefunc(writer io.Writer) error
+method *github.com/lanechi/gonex/router.Registry Validatefunc(routes ...github.com/lanechi/gonex/router.RouteMetadata) error
 type Binder struct{Fields []github.com/lanechi/gonex/router.FieldBinding; MaxMultipartMemory int64; hasQuery bool; hasBindingRules bool; hasValidateRules bool}
 type BindingError struct{Code int; HTTPStatus int; Message string; Cause error}
 type Definition struct{Metadata github.com/lanechi/gonex/router.RouteMetadata; Runtime github.com/lanechi/gonex/router.RouteRuntime}
 type FieldBinding struct{Index []int; Path string; Query string; Header string; Cookie string; Form string; Default string; HasDefault bool; File string}
-type Registry struct{mu sync.RWMutex; routes []github.com/lanechi/gonex/router.Definition; keys map[string]struct{}}
+type Meta struct{}
+type Registry struct{mu sync.RWMutex; routes []github.com/lanechi/gonex/router.RouteMetadata; keys map[string]struct{}}
 type RouteMetadata struct{Path string; Method string; ControllerName string; Action string; RequestType reflect.Type; ResponseType reflect.Type; Tags []string; Summary string; Description string; OperationID string; Deprecated bool; Security []string; Produces []string; Consumes []string; Bindings []github.com/lanechi/gonex/router.FieldBinding}
-type RouteRuntime struct{Controller any; MethodValue reflect.Value; Binder *github.com/lanechi/gonex/router.Binder}
+type RouteRuntime struct{MethodValue reflect.Value; Binder *github.com/lanechi/gonex/router.Binder}
 PACKAGE github.com/lanechi/gonex/scheduler
 const AllowOverlap github.com/lanechi/gonex/scheduler.OverlapPolicy = 1
+const EveryInstance github.com/lanechi/gonex/scheduler.ExecutionMode = 1
 const QueueOne github.com/lanechi/gonex/scheduler.OverlapPolicy = 2
+const RunFailed github.com/lanechi/gonex/scheduler.RunStatus = "failed"
+const RunSkipped github.com/lanechi/gonex/scheduler.RunStatus = "skipped"
+const RunSuccess github.com/lanechi/gonex/scheduler.RunStatus = "success"
+const RunTimeout github.com/lanechi/gonex/scheduler.RunStatus = "timeout"
+const Singleton github.com/lanechi/gonex/scheduler.ExecutionMode = 0
 const SkipIfRunning github.com/lanechi/gonex/scheduler.OverlapPolicy = 0
 field Cron.Expr string ""
 field Every.Duration time.Duration ""
+field Execution.Definition github.com/lanechi/gonex/scheduler.JobDefinition ""
+field Execution.Payload encoding/json.RawMessage ""
 field Job.Handler github.com/lanechi/gonex/scheduler.Handler ""
 field Job.Middleware []github.com/lanechi/gonex/scheduler.Middleware ""
 field Job.Name string ""
@@ -474,16 +480,43 @@ field Job.OverlapPolicy github.com/lanechi/gonex/scheduler.OverlapPolicy ""
 field Job.RunImmediately bool ""
 field Job.Schedule github.com/lanechi/gonex/scheduler.Schedule ""
 field Job.Timeout time.Duration ""
+field JobDefinition.Enabled bool ""
+field JobDefinition.ExecutionMode github.com/lanechi/gonex/scheduler.ExecutionMode ""
+field JobDefinition.Handler string ""
+field JobDefinition.ID string ""
+field JobDefinition.Name string ""
+field JobDefinition.OverlapPolicy github.com/lanechi/gonex/scheduler.OverlapPolicy ""
+field JobDefinition.Payload encoding/json.RawMessage ""
+field JobDefinition.Schedule github.com/lanechi/gonex/scheduler.Schedule ""
+field JobDefinition.Timeout time.Duration ""
+field JobDefinition.Version int64 ""
 field JobInfo.LastRun time.Time ""
 field JobInfo.Name string ""
 field JobInfo.NextRun time.Time ""
 field JobInfo.Running bool ""
 field JobInfo.Schedule github.com/lanechi/gonex/scheduler.Schedule ""
 field Once.At time.Time ""
+field RunRecord.Duration time.Duration ""
+field RunRecord.Error string ""
+field RunRecord.FinishedAt time.Time ""
+field RunRecord.InstanceID string ""
+field RunRecord.JobID string ""
+field RunRecord.ScheduledAt time.Time ""
+field RunRecord.StartedAt time.Time ""
+field RunRecord.Status github.com/lanechi/gonex/scheduler.RunStatus ""
 func MustNewfunc(options ...github.com/lanechi/gonex/scheduler.Option) github.com/lanechi/gonex/scheduler.Scheduler
+func NewHandlerRegistryfunc() github.com/lanechi/gonex/scheduler.HandlerRegistry
+func NewLoaderfunc(store github.com/lanechi/gonex/scheduler.Store, registry github.com/lanechi/gonex/scheduler.HandlerRegistry, scheduler github.com/lanechi/gonex/scheduler.Scheduler) (*github.com/lanechi/gonex/scheduler.Loader, error)
 func Newfunc(options ...github.com/lanechi/gonex/scheduler.Option) (github.com/lanechi/gonex/scheduler.Scheduler, error)
 func WithLocationfunc(location *time.Location) github.com/lanechi/gonex/scheduler.Option
 func WithLoggerfunc(logger github.com/lanechi/gonex/logging.Logger) github.com/lanechi/gonex/scheduler.Option
+method *github.com/lanechi/gonex/scheduler.Loader Syncfunc(ctx context.Context) error
+method github.com/lanechi/gonex/scheduler.HandlerRegistry Getfunc(name string) (github.com/lanechi/gonex/scheduler.PersistentHandler, bool)
+method github.com/lanechi/gonex/scheduler.HandlerRegistry Registerfunc(name string, handler github.com/lanechi/gonex/scheduler.PersistentHandler) error
+method github.com/lanechi/gonex/scheduler.Lock Unlockfunc(context.Context) error
+method github.com/lanechi/gonex/scheduler.Locker TryLockfunc(context.Context, string, time.Duration) (github.com/lanechi/gonex/scheduler.Lock, bool, error)
+method github.com/lanechi/gonex/scheduler.RunRecorder Finishfunc(context.Context, github.com/lanechi/gonex/scheduler.RunRecord) error
+method github.com/lanechi/gonex/scheduler.RunRecorder Startfunc(context.Context, github.com/lanechi/gonex/scheduler.RunRecord) error
 method github.com/lanechi/gonex/scheduler.Scheduler Addfunc(github.com/lanechi/gonex/scheduler.Job) error
 method github.com/lanechi/gonex/scheduler.Scheduler Jobsfunc() []github.com/lanechi/gonex/scheduler.JobInfo
 method github.com/lanechi/gonex/scheduler.Scheduler Removefunc(name string) error
@@ -491,17 +524,31 @@ method github.com/lanechi/gonex/scheduler.Scheduler Startfunc(context.Context) e
 method github.com/lanechi/gonex/scheduler.Scheduler Stopfunc()
 method github.com/lanechi/gonex/scheduler.Scheduler Usefunc(...github.com/lanechi/gonex/scheduler.Middleware) error
 method github.com/lanechi/gonex/scheduler.Scheduler Waitfunc(context.Context) error
+method github.com/lanechi/gonex/scheduler.Store Getfunc(context.Context, string) (github.com/lanechi/gonex/scheduler.JobDefinition, error)
+method github.com/lanechi/gonex/scheduler.Store ListEnabledfunc(context.Context) ([]github.com/lanechi/gonex/scheduler.JobDefinition, error)
 type Cron struct{Expr string}
 type Every struct{Duration time.Duration}
+type Execution struct{Definition github.com/lanechi/gonex/scheduler.JobDefinition; Payload encoding/json.RawMessage}
+type ExecutionMode uint8
 type Handler func(context.Context) error
+type HandlerRegistry interface{Get(name string) (github.com/lanechi/gonex/scheduler.PersistentHandler, bool); Register(name string, handler github.com/lanechi/gonex/scheduler.PersistentHandler) error}
 type Job struct{Name string; Schedule github.com/lanechi/gonex/scheduler.Schedule; Handler github.com/lanechi/gonex/scheduler.Handler; Timeout time.Duration; OverlapPolicy github.com/lanechi/gonex/scheduler.OverlapPolicy; RunImmediately bool; Middleware []github.com/lanechi/gonex/scheduler.Middleware}
+type JobDefinition struct{ID string; Name string; Handler string; Schedule github.com/lanechi/gonex/scheduler.Schedule; Payload encoding/json.RawMessage; Enabled bool; Version int64; Timeout time.Duration; OverlapPolicy github.com/lanechi/gonex/scheduler.OverlapPolicy; ExecutionMode github.com/lanechi/gonex/scheduler.ExecutionMode}
 type JobInfo struct{Name string; Schedule github.com/lanechi/gonex/scheduler.Schedule; NextRun time.Time; LastRun time.Time; Running bool}
+type Loader struct{store github.com/lanechi/gonex/scheduler.Store; registry github.com/lanechi/gonex/scheduler.HandlerRegistry; scheduler github.com/lanechi/gonex/scheduler.Scheduler; mu sync.Mutex; loaded map[string]github.com/lanechi/gonex/scheduler.loadedJob}
+type Lock interface{Unlock(context.Context) error}
+type Locker interface{TryLock(context.Context, string, time.Duration) (github.com/lanechi/gonex/scheduler.Lock, bool, error)}
 type Middleware func(github.com/lanechi/gonex/scheduler.Handler) github.com/lanechi/gonex/scheduler.Handler
 type Once struct{At time.Time}
 type Option func(*github.com/lanechi/gonex/scheduler.managerOptions) error
 type OverlapPolicy uint8
+type PersistentHandler func(context.Context, github.com/lanechi/gonex/scheduler.Execution) error
+type RunRecord struct{JobID string; InstanceID string; ScheduledAt time.Time; StartedAt time.Time; FinishedAt time.Time; Status github.com/lanechi/gonex/scheduler.RunStatus; Error string; Duration time.Duration}
+type RunRecorder interface{Finish(context.Context, github.com/lanechi/gonex/scheduler.RunRecord) error; Start(context.Context, github.com/lanechi/gonex/scheduler.RunRecord) error}
+type RunStatus string
 type Schedule interface{isSchedule()}
 type Scheduler interface{Add(github.com/lanechi/gonex/scheduler.Job) error; Jobs() []github.com/lanechi/gonex/scheduler.JobInfo; Remove(name string) error; Start(context.Context) error; Stop(); Use(...github.com/lanechi/gonex/scheduler.Middleware) error; Wait(context.Context) error}
+type Store interface{Get(context.Context, string) (github.com/lanechi/gonex/scheduler.JobDefinition, error); ListEnabled(context.Context) ([]github.com/lanechi/gonex/scheduler.JobDefinition, error)}
 var ErrDuplicateJob error
 var ErrJobNotFound error
 var ErrStarted error

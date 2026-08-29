@@ -559,13 +559,13 @@ func TestOpenAPIConstraintsEmbeddedSchemaAndSwaggerEscaping(t *testing.T) {
 func TestRouteRegistryDeepSnapshot(t *testing.T) {
 	registry := router.NewRegistry()
 	binder := &router.Binder{Fields: []router.FieldBinding{{Index: []int{1}, Query: "page"}}}
-	if err := registry.Register(router.Definition{Metadata: router.RouteMetadata{Method: http.MethodGet, Path: "/snapshot"}, Runtime: router.RouteRuntime{Binder: binder}}); err != nil {
+	if err := registry.Register(router.RouteMetadata{Method: http.MethodGet, Path: "/snapshot", Bindings: binder.Fields}); err != nil {
 		t.Fatal(err)
 	}
 	snapshot := registry.List()
-	snapshot[0].Runtime.Binder.Fields[0].Index[0] = 99
-	if got := registry.List()[0].Runtime.Binder.Fields[0].Index[0]; got != 1 {
-		t.Fatalf("registry binder index leaked through snapshot: %d", got)
+	snapshot[0].Bindings[0].Index[0] = 99
+	if got := registry.List()[0].Bindings[0].Index[0]; got != 1 {
+		t.Fatalf("registry binding index leaked through snapshot: %d", got)
 	}
 }
 
@@ -588,9 +588,9 @@ func TestMultipleServersKeepRoutesOpenAPIAndRequestLogsIndependent(t *testing.T)
 	api.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/hello", nil))
 	if response.Code != http.StatusOK || api.OpenAPI().Info.Title != "api" || admin.OpenAPI().Info.Title != "admin" ||
 		len(api.Routes()) != 1 ||
-		api.Routes()[0].Metadata.Path != "/hello" ||
+		api.Routes()[0].Path != "/hello" ||
 		len(admin.Routes()) != 1 ||
-		admin.Routes()[0].Metadata.Path != "/admin/hello" {
+		admin.Routes()[0].Path != "/admin/hello" {
 		t.Fatalf("multi-server state: apiRoutes=%#v adminRoutes=%#v", api.Routes(), admin.Routes())
 	}
 	if len(apiLogger.Messages()) == 0 || len(adminLogger.Messages()) != 0 {

@@ -29,6 +29,10 @@ type RouteMetadata struct {
 	Bindings []FieldBinding
 }
 
+// Meta marks a request structure as a declarative route definition.
+// It is defined here so discovery can use the package-qualified type identity.
+type Meta struct{}
+
 // ParseMeta extracts route metadata from a pointer-to-struct request type.
 func ParseMeta(requestType reflect.Type) (RouteMetadata, error) {
 	if requestType == nil {
@@ -120,7 +124,7 @@ func isMetaField(fieldType reflect.Type) bool {
 	if fieldType.Kind() == reflect.Ptr {
 		fieldType = fieldType.Elem()
 	}
-	return fieldType.Kind() == reflect.Struct && fieldType.Name() == "Meta"
+	return fieldType == reflect.TypeOf(Meta{})
 }
 
 func splitTag(raw string) []string {

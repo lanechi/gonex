@@ -2,9 +2,7 @@ package ghttp
 
 import (
 	"fmt"
-	"reflect"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -15,11 +13,6 @@ import (
 
 // Option configures a Server during construction.
 type Option func(*Server)
-
-// schedulerOwners records the one Server that may manage each injected
-// Scheduler. Scheduler shutdown is terminal, so allowing an instance to be
-// attached to more than one Server would make lifecycle ownership ambiguous.
-var schedulerOwners sync.Map
 
 // TimeoutOptions groups the HTTP and graceful-shutdown timeouts.
 type TimeoutOptions struct {
@@ -50,7 +43,7 @@ func WithHTTPTimeoutsAndShutdown(read, write, idle, shutdown time.Duration) Opti
 func WithTLSOptions(options TLSOptions) Option {
 	return func(server *Server) {
 		server.tlsEnabled, server.tlsCertFile, server.tlsKeyFile = options.Enabled, options.CertFile, options.KeyFile
-		server.options.TLS = Optional[TLSOptions]{Value: options, Set: true}
+		server.options.TLS = optional[TLSOptions]{Value: options, Set: true}
 	}
 }
 
@@ -59,12 +52,12 @@ func WithSessionOptions(options SessionOptions) Option {
 	return func(server *Server) {
 		if options.Manager != nil {
 			server.sessionManager = options.Manager
-			server.options.Session = Optional[*SessionManager]{Value: options.Manager, Set: true}
+			server.options.Session = optional[*SessionManager]{Value: options.Manager, Set: true}
 		}
 		if options.CookieOptions != nil {
 			copy := *options.CookieOptions
 			server.sessionCookieOptions = &copy
-			server.options.SessionCookie = Optional[*CookieOptions]{Value: &copy, Set: true}
+			server.options.SessionCookie = optional[*CookieOptions]{Value: &copy, Set: true}
 		}
 	}
 }
@@ -73,19 +66,19 @@ func WithSessionOptions(options SessionOptions) Option {
 func WithSecurityOptions(options SecurityOptions) Option {
 	return func(server *Server) {
 		server.allowedHosts = append([]string(nil), options.AllowedHosts...)
-		server.options.AllowedHosts = Optional[[]string]{Value: append([]string(nil), options.AllowedHosts...), Set: true}
+		server.options.AllowedHosts = optional[[]string]{Value: append([]string(nil), options.AllowedHosts...), Set: true}
 		server.corsOptions = nil
 		if options.CORS.Enabled {
 			copy := options.CORS
 			server.corsOptions = &copy
 		}
-		server.options.CORS = Optional[CORSOptions]{Value: options.CORS, Set: true}
+		server.options.CORS = optional[CORSOptions]{Value: options.CORS, Set: true}
 		server.csrfOptions = nil
 		if options.CSRF.Enabled {
 			copy := options.CSRF
 			server.csrfOptions = &copy
 		}
-		server.options.CSRF = Optional[CSRFOptions]{Value: options.CSRF, Set: true}
+		server.options.CSRF = optional[CSRFOptions]{Value: options.CSRF, Set: true}
 	}
 }
 
@@ -103,7 +96,7 @@ func WithAddress(address string) Option {
 	return func(server *Server) {
 		if address = strings.TrimSpace(address); address != "" {
 			server.address = address
-			server.options.Address = Optional[string]{Value: address, Set: true}
+			server.options.Address = optional[string]{Value: address, Set: true}
 		}
 	}
 }
@@ -113,15 +106,15 @@ func WithHTTPTimeouts(read, write, idle time.Duration) Option {
 	return func(server *Server) {
 		if read > 0 {
 			server.readTimeout = read
-			server.options.ReadTimeout = Optional[time.Duration]{Value: read, Set: true}
+			server.options.ReadTimeout = optional[time.Duration]{Value: read, Set: true}
 		}
 		if write > 0 {
 			server.writeTimeout = write
-			server.options.WriteTimeout = Optional[time.Duration]{Value: write, Set: true}
+			server.options.WriteTimeout = optional[time.Duration]{Value: write, Set: true}
 		}
 		if idle > 0 {
 			server.idleTimeout = idle
-			server.options.IdleTimeout = Optional[time.Duration]{Value: idle, Set: true}
+			server.options.IdleTimeout = optional[time.Duration]{Value: idle, Set: true}
 		}
 	}
 }
@@ -132,15 +125,15 @@ func WithRequestLimits(bodyBytes, multipartMemory int64, headerBytes int) Option
 	return func(server *Server) {
 		if bodyBytes > 0 {
 			server.maxBodyBytes = bodyBytes
-			server.options.BodyLimit = Optional[int64]{Value: bodyBytes, Set: true}
+			server.options.BodyLimit = optional[int64]{Value: bodyBytes, Set: true}
 		}
 		if multipartMemory > 0 {
 			server.maxMultipartMemory = multipartMemory
-			server.options.MultipartLimit = Optional[int64]{Value: multipartMemory, Set: true}
+			server.options.MultipartLimit = optional[int64]{Value: multipartMemory, Set: true}
 		}
 		if headerBytes > 0 {
 			server.maxHeaderBytes = headerBytes
-			server.options.HeaderLimit = Optional[int]{Value: headerBytes, Set: true}
+			server.options.HeaderLimit = optional[int]{Value: headerBytes, Set: true}
 		}
 	}
 }
@@ -169,36 +162,23 @@ func WithLogger(logger logging.Logger) Option {
 	return func(server *Server) {
 		if logger != nil {
 			server.logger = logger
-			server.options.Logger = Optional[logging.Logger]{Value: logger, Set: true}
+			server.options.Logger = optional[logging.Logger]{Value: logger, Set: true}
 		}
 	}
 }
 
 // WithScheduler supplies a scheduler whose lifecycle is managed exclusively by
-// Server. Supplying the same scheduler to another Server records a construction
-// error, because scheduler shutdown is terminal and cannot have two owners.
+// the configured Server. The caller must not inject the same instance into
+// multiple Servers.
 func WithScheduler(manager scheduler.Scheduler) Option {
 	return func(server *Server) {
 		if manager == nil {
-			return
-		}
-		value := reflect.ValueOf(manager)
-		if value.Kind() == reflect.Ptr && value.IsNil() {
 			server.addInitializationError(fmt.Errorf("scheduler must not be nil"))
-			return
-		}
-		if !value.Type().Comparable() {
-			server.addInitializationError(fmt.Errorf("scheduler %T must be comparable for exclusive Server ownership", manager))
-			return
-		}
-		owner, loaded := schedulerOwners.LoadOrStore(manager, server)
-		if loaded && owner != server {
-			server.addInitializationError(fmt.Errorf("scheduler is already owned by another Server"))
 			return
 		}
 		server.scheduler = manager
 		server.schedulerEnabled = true
-		server.options.Scheduler = Optional[SchedulerOptions]{Value: SchedulerOptions{Enabled: true}, Set: true}
+		server.options.Scheduler = optional[SchedulerOptions]{Value: SchedulerOptions{Enabled: true}, Set: true}
 	}
 }
 
@@ -209,7 +189,7 @@ func WithSchedulerOptions(options SchedulerOptions) Option {
 	return func(server *Server) {
 		server.schedulerEnabled = options.Enabled
 		server.schedulerLocation = options.Location
-		server.options.Scheduler = Optional[SchedulerOptions]{Value: options, Set: true}
+		server.options.Scheduler = optional[SchedulerOptions]{Value: options, Set: true}
 	}
 }
 
@@ -218,7 +198,7 @@ func WithConfig(configuration Config) Option {
 	return func(server *Server) {
 		if configuration != nil {
 			server.config = configuration
-			server.options.Config = Optional[Config]{Value: configuration, Set: true}
+			server.options.Config = optional[Config]{Value: configuration, Set: true}
 		}
 	}
 }
@@ -228,7 +208,7 @@ func WithSessionManager(manager *SessionManager) Option {
 	return func(server *Server) {
 		if manager != nil {
 			server.sessionManager = manager
-			server.options.Session = Optional[*SessionManager]{Value: manager, Set: true}
+			server.options.Session = optional[*SessionManager]{Value: manager, Set: true}
 		}
 	}
 }
@@ -238,14 +218,14 @@ func WithSessionCookieOptions(options CookieOptions) Option {
 	return func(server *Server) {
 		copy := options
 		server.sessionCookieOptions = &copy
-		server.options.SessionCookie = Optional[*CookieOptions]{Value: &copy, Set: true}
+		server.options.SessionCookie = optional[*CookieOptions]{Value: &copy, Set: true}
 	}
 }
 
 // WithCORS enables CORS middleware during construction.
 func WithCORS(configuration CORSOptions) Option {
 	return func(server *Server) {
-		server.options.CORS = Optional[CORSOptions]{Value: configuration, Set: true}
+		server.options.CORS = optional[CORSOptions]{Value: configuration, Set: true}
 		if configuration.Enabled {
 			server.corsOptions = &configuration
 		} else {
@@ -301,14 +281,14 @@ func WithBindingValidator(validation *validator.Validate) Option {
 func WithOpenAPI(options OpenAPIOptions) Option {
 	return func(server *Server) {
 		server.openapiEnabled = options.Enabled
-		server.options.OpenAPI = Optional[OpenAPIOptions]{Value: options, Set: true}
+		server.options.OpenAPI = optional[OpenAPIOptions]{Value: options, Set: true}
 		if options.DocumentPath != "" {
 			server.openapiPath = options.DocumentPath
-			server.options.OpenAPIPath = Optional[string]{Value: options.DocumentPath, Set: true}
+			server.options.OpenAPIPath = optional[string]{Value: options.DocumentPath, Set: true}
 		}
 		if options.SwaggerPath != "" {
 			server.swaggerPath = options.SwaggerPath
-			server.options.SwaggerPath = Optional[string]{Value: options.SwaggerPath, Set: true}
+			server.options.SwaggerPath = optional[string]{Value: options.SwaggerPath, Set: true}
 		}
 	}
 }
@@ -318,7 +298,7 @@ func WithShutdownTimeout(timeout time.Duration) Option {
 	return func(server *Server) {
 		if timeout > 0 {
 			server.shutdownTimeout = timeout
-			server.options.ShutdownTimeout = Optional[time.Duration]{Value: timeout, Set: true}
+			server.options.ShutdownTimeout = optional[time.Duration]{Value: timeout, Set: true}
 		}
 	}
 }
@@ -329,7 +309,7 @@ func WithTLS(certFile, keyFile string) Option {
 		server.tlsCertFile = certFile
 		server.tlsKeyFile = keyFile
 		server.tlsEnabled = certFile != "" || keyFile != ""
-		server.options.TLS = Optional[TLSOptions]{Value: TLSOptions{Enabled: server.tlsEnabled, CertFile: certFile, KeyFile: keyFile}, Set: true}
+		server.options.TLS = optional[TLSOptions]{Value: TLSOptions{Enabled: server.tlsEnabled, CertFile: certFile, KeyFile: keyFile}, Set: true}
 	}
 }
 
@@ -338,7 +318,7 @@ func WithOpenAPIPath(path string) Option {
 	return func(server *Server) {
 		if path != "" {
 			server.openapiPath = path
-			server.options.OpenAPIPath = Optional[string]{Value: path, Set: true}
+			server.options.OpenAPIPath = optional[string]{Value: path, Set: true}
 		}
 	}
 }
@@ -348,7 +328,7 @@ func WithSwaggerPath(path string) Option {
 	return func(server *Server) {
 		if path != "" {
 			server.swaggerPath = path
-			server.options.SwaggerPath = Optional[string]{Value: path, Set: true}
+			server.options.SwaggerPath = optional[string]{Value: path, Set: true}
 		}
 	}
 }
@@ -357,7 +337,7 @@ func WithSwaggerPath(path string) Option {
 func WithTemplateRoot(root string) Option {
 	return func(server *Server) {
 		if root != "" {
-			server.options.TemplateRoot = Optional[string]{Value: root, Set: true}
+			server.options.TemplateRoot = optional[string]{Value: root, Set: true}
 			if err := server.templates.SetRoot(root); err != nil {
 				server.addInitializationError(fmt.Errorf("configure template root: %w", err))
 			}
@@ -368,7 +348,7 @@ func WithTemplateRoot(root string) Option {
 // WithAllowedHosts limits accepted Host headers.
 func WithAllowedHosts(hosts ...string) Option {
 	return func(server *Server) {
-		server.options.AllowedHosts = Optional[[]string]{Value: append([]string(nil), hosts...), Set: true}
+		server.options.AllowedHosts = optional[[]string]{Value: append([]string(nil), hosts...), Set: true}
 		server.allowedHosts = append([]string(nil), hosts...)
 	}
 }
@@ -376,7 +356,7 @@ func WithAllowedHosts(hosts ...string) Option {
 // WithCSRF enables double-submit-cookie CSRF protection.
 func WithCSRF(options CSRFOptions) Option {
 	return func(server *Server) {
-		server.options.CSRF = Optional[CSRFOptions]{Value: options, Set: true}
+		server.options.CSRF = optional[CSRFOptions]{Value: options, Set: true}
 		if options.Enabled {
 			server.csrfOptions = &options
 		} else {

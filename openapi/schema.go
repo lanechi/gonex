@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/lanechi/gonex/router"
 )
 
 var multipartFileHeaderType = reflect.TypeOf((*multipart.FileHeader)(nil))
@@ -277,7 +279,7 @@ func hasBindingTags(f reflect.StructField) bool {
 func isEmbeddedStruct(t reflect.Type) bool { return indirectType(t).Kind() == reflect.Struct }
 func isMetaField(t reflect.Type) bool {
 	t = indirectType(t)
-	return t != nil && t.Kind() == reflect.Struct && t.Name() == "Meta"
+	return t == reflect.TypeOf(router.Meta{})
 }
 func indirectType(t reflect.Type) reflect.Type {
 	for t != nil && t.Kind() == reflect.Ptr {

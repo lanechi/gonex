@@ -16,7 +16,7 @@ func (server *Server) RouteTable() string {
 	}
 	frameworkHandlers := make(map[string]string)
 	for _, route := range server.Routes() {
-		metadata := route.Metadata
+		metadata := route
 		frameworkHandlers[strings.ToUpper(metadata.Method)+" "+metadata.Path] = metadata.ControllerName + "." + metadata.Action
 	}
 	rows := make([]routeRow, 0, len(server.engine.Routes()))

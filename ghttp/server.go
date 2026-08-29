@@ -89,7 +89,7 @@ func newServerDefaults(configuration Config) *Server {
 	}
 	if logger := logging.InitialLogger(); logger != nil {
 		server.logger = logger
-		server.options.Logger = Optional[logging.Logger]{Value: server.logger, Set: true}
+		server.options.Logger = optional[logging.Logger]{Value: server.logger, Set: true}
 	} else {
 		server.logger = logging.NewDefaultLogger()
 	}
@@ -199,7 +199,7 @@ func (server *Server) Engine() *gin.Engine {
 }
 
 // Routes returns a snapshot of the framework-owned route table.
-func (server *Server) Routes() []router.Definition {
+func (server *Server) Routes() []router.RouteMetadata {
 	return server.registry.List()
 }
 
@@ -253,7 +253,7 @@ func (server *Server) RestartManager() RestartManager {
 
 // SetTemplateRoot configures and loads the server template directory.
 func (server *Server) SetTemplateRoot(root string) error {
-	server.options.TemplateRoot = Optional[string]{Value: root, Set: true}
+	server.options.TemplateRoot = optional[string]{Value: root, Set: true}
 	return server.templates.SetRoot(root)
 }
 
@@ -271,7 +271,7 @@ func (server *Server) SetTrustedProxies(proxies []string) error {
 func (server *Server) SetAllowedHosts(hosts ...string) {
 	server.settingsMu.Lock()
 	defer server.settingsMu.Unlock()
-	server.options.AllowedHosts = Optional[[]string]{Value: append([]string(nil), hosts...), Set: true}
+	server.options.AllowedHosts = optional[[]string]{Value: append([]string(nil), hosts...), Set: true}
 	server.allowedHosts = append([]string(nil), hosts...)
 }
 
@@ -282,7 +282,7 @@ func (server *Server) EnableCSRF(options CSRFOptions) error {
 	}
 	server.settingsMu.Lock()
 	defer server.settingsMu.Unlock()
-	server.options.CSRF = Optional[CSRFOptions]{Value: options, Set: true}
+	server.options.CSRF = optional[CSRFOptions]{Value: options, Set: true}
 	if options.Enabled {
 		copy := options
 		server.csrfOptions = &copy
@@ -480,7 +480,7 @@ func (server *Server) Shutdown(ctx context.Context) error {
 func (server *Server) EnableOpenAPI(enabled bool) {
 	server.settingsMu.Lock()
 	server.openapiEnabled = enabled
-	server.options.OpenAPI = Optional[OpenAPIOptions]{Value: OpenAPIOptions{Enabled: enabled}, Set: true}
+	server.options.OpenAPI = optional[OpenAPIOptions]{Value: OpenAPIOptions{Enabled: enabled}, Set: true}
 	server.settingsMu.Unlock()
 }
 

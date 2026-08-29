@@ -14,8 +14,8 @@ func TestSchedulerConfiguration(t *testing.T) {
 	if err := server.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if server.Scheduler() != nil {
-		t.Fatal("disabled scheduler is still attached to Server")
+	if server.Scheduler() == nil {
+		t.Fatal("disabled scheduler is not available for registration")
 	}
 
 	invalidTimezone := config.New()

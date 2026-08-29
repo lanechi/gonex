@@ -57,3 +57,27 @@ func TestDirectoryTransactionRejectsTraversal(t *testing.T) {
 		t.Fatal("directory traversal was accepted")
 	}
 }
+
+func TestDirectoryTransactionRejectsDuplicateAndSymlinkTargets(t *testing.T) {
+	root := t.TempDir()
+	stageA, stageB := filepath.Join(root, "stage-a"), filepath.Join(root, "stage-b")
+	if err := os.MkdirAll(stageA, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(stageB, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BeginDirectoryTransaction(root,
+		DirectorySwap{Stage: stageA, Target: "dao"},
+		DirectorySwap{Stage: stageB, Target: "dao"},
+	); err == nil {
+		t.Fatal("duplicate target was accepted")
+	}
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "link")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if _, err := BeginDirectoryTransaction(root, DirectorySwap{Stage: stageA, Target: "link/dao"}); err == nil {
+		t.Fatal("symlink target parent was accepted")
+	}
+}

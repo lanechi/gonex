@@ -6,8 +6,7 @@ import (
 	"github.com/lanechi/gonex/router"
 )
 
-func requestBodyForRoute(route router.Definition) map[string]any {
-	metadata := route.Metadata
+func requestBodyForRoute(metadata router.RouteMetadata) map[string]any {
 	if metadata.RequestType == nil {
 		return nil
 	}
@@ -31,7 +30,7 @@ func requestBodyForRoute(route router.Definition) map[string]any {
 		required = required || schemaRequiresBody(jsonSchema)
 	}
 	if hasForm {
-		for _, mediaType := range formMediaTypes(route) {
+		for _, mediaType := range formMediaTypes(metadata) {
 			content[mediaType] = map[string]any{"schema": formSchema}
 		}
 		required = required || schemaRequiresBody(formSchema)
@@ -43,8 +42,7 @@ func requestBodyForRoute(route router.Definition) map[string]any {
 	return requestBody
 }
 
-func formMediaTypes(route router.Definition) []string {
-	metadata := route.Metadata
+func formMediaTypes(metadata router.RouteMetadata) []string {
 	if len(metadata.Consumes) == 0 {
 		if routeUsesMultipart(metadata) {
 			return []string{"multipart/form-data"}

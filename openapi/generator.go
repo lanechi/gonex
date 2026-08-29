@@ -7,11 +7,11 @@ import (
 	"github.com/lanechi/gonex/router"
 )
 
-// Generate builds an OpenAPI 3 document from framework-owned route definitions.
-func Generate(name string, routes []router.Definition) Document {
+// Generate builds an OpenAPI 3 document from route metadata.
+func Generate(name string, routes []router.RouteMetadata) Document {
 	document := Document{OpenAPI: "3.0.3", Info: Info{Title: name, Version: "0.1.0"}, Paths: map[string]map[string]Operation{}, Components: map[string]any{"schemas": map[string]any{}, "securitySchemes": map[string]any{}}}
 	for _, route := range routes {
-		metadata := route.Metadata
+		metadata := route
 		op := Operation{Tags: metadata.Tags, Summary: metadata.Summary, Description: metadata.Description, OperationID: metadata.OperationID, Deprecated: metadata.Deprecated, Security: securityRequirements(metadata.Security), Parameters: parametersForRoute(route), Responses: map[string]any{"200": responseSchema(metadata.ResponseType, metadata.Produces), "400": map[string]any{"description": "Bad Request"}, "500": map[string]any{"description": "Internal Server Error"}}}
 		op.RequestBody = requestBodyForRoute(route)
 		path := Path(metadata.Path)

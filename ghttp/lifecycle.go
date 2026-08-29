@@ -26,10 +26,6 @@ type schedulerLoggerSetter interface {
 }
 
 func (server *Server) configureScheduler() {
-	if !server.schedulerEnabled {
-		server.scheduler = nil
-		return
-	}
 	if server.scheduler == nil {
 		manager, err := scheduler.New(scheduler.WithLocation(server.schedulerLocationOrLocal()))
 		if err != nil {
@@ -37,6 +33,9 @@ func (server *Server) configureScheduler() {
 			return
 		}
 		server.scheduler = manager
+	}
+	if !server.schedulerEnabled {
+		return
 	}
 	if configured, ok := server.scheduler.(schedulerLoggerSetter); ok {
 		configured.SetDefaultLogger(server.logger)

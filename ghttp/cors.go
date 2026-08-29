@@ -23,7 +23,7 @@ type CORSOptions struct {
 func (server *Server) EnableCORS(options CORSOptions) error {
 	server.settingsMu.Lock()
 	defer server.settingsMu.Unlock()
-	server.options.CORS = Optional[CORSOptions]{Value: options, Set: true}
+	server.options.CORS = optional[CORSOptions]{Value: options, Set: true}
 	if !options.Enabled {
 		server.corsOptions = nil
 		server.corsHandler = nil

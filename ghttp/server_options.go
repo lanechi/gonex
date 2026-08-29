@@ -8,7 +8,7 @@ import (
 
 // Optional stores a configuration value together with whether it was
 // explicitly supplied. It is used only during Server construction.
-type Optional[T any] struct {
+type optional[T any] struct {
 	Value T
 	Set   bool
 }
@@ -44,26 +44,26 @@ type SchedulerOptions struct {
 // state remains owned by Server; configuration resolution reads these values
 // to enforce a deterministic precedence order.
 type serverOptions struct {
-	Config          Optional[Config]
-	Logger          Optional[logging.Logger]
-	Address         Optional[string]
-	Mode            Optional[string]
-	ReadTimeout     Optional[time.Duration]
-	WriteTimeout    Optional[time.Duration]
-	IdleTimeout     Optional[time.Duration]
-	BodyLimit       Optional[int64]
-	MultipartLimit  Optional[int64]
-	HeaderLimit     Optional[int]
-	ShutdownTimeout Optional[time.Duration]
-	TLS             Optional[TLSOptions]
-	OpenAPI         Optional[OpenAPIOptions]
-	OpenAPIPath     Optional[string]
-	SwaggerPath     Optional[string]
-	Session         Optional[*SessionManager]
-	SessionCookie   Optional[*CookieOptions]
-	CORS            Optional[CORSOptions]
-	TemplateRoot    Optional[string]
-	AllowedHosts    Optional[[]string]
-	CSRF            Optional[CSRFOptions]
-	Scheduler       Optional[SchedulerOptions]
+	Config          optional[Config]
+	Logger          optional[logging.Logger]
+	Address         optional[string]
+	Mode            optional[string]
+	ReadTimeout     optional[time.Duration]
+	WriteTimeout    optional[time.Duration]
+	IdleTimeout     optional[time.Duration]
+	BodyLimit       optional[int64]
+	MultipartLimit  optional[int64]
+	HeaderLimit     optional[int]
+	ShutdownTimeout optional[time.Duration]
+	TLS             optional[TLSOptions]
+	OpenAPI         optional[OpenAPIOptions]
+	OpenAPIPath     optional[string]
+	SwaggerPath     optional[string]
+	Session         optional[*SessionManager]
+	SessionCookie   optional[*CookieOptions]
+	CORS            optional[CORSOptions]
+	TemplateRoot    optional[string]
+	AllowedHosts    optional[[]string]
+	CSRF            optional[CSRFOptions]
+	Scheduler       optional[SchedulerOptions]
 }

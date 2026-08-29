@@ -355,7 +355,8 @@ Redis 驱动的存储或 Redis client 构造；业务可按自身生命周期实
 
 每个 `Server` 都拥有独立的 `scheduler.Scheduler`。它在 `OnStart` 阶段调用 `Start(ctx)`；优雅关闭先
 调用 `Stop()` 取消任务 Context，再在 HTTP 连接 drain 后调用 `Wait(ctx)`。应用不需要自行管理这三步。
-可通过 `server.scheduler.enabled` 禁用，`server.scheduler.timezone` 为未带 `TZ=`/`CRON_TZ=` 的 Cron 设置
+可通过 `server.scheduler.enabled` 禁用执行；禁用时 `Scheduler()` 仍可注册和查看任务，但 Server 不会启动它。
+`server.scheduler.timezone` 为未带 `TZ=`/`CRON_TZ=` 的 Cron 设置
 IANA 时区；无效时区会通过 `server.Err()` 返回。
 
 ```go
@@ -376,7 +377,7 @@ if err := server.Scheduler().Add(scheduler.Job{
 默认 `SkipIfRunning` 防止同一任务重入；可显式选择 `AllowOverlap` 或 `QueueOne`。任务 panic 会被恢复并
 记录到 Server Logger，`Timeout` 和 Server 关闭都会取消传给 `Handler` 的 Context。通用拦截器可通过
 `server.Scheduler().Use(...)` 注册；`WithScheduler` 仅用于注入一个有意自定义的 Scheduler。注入后由该
-Server 独占其 Start/Stop/Wait 生命周期，不能跨 Server 共享。
+Server 独占其 Start/Stop/Wait 生命周期；调用方不得将同一实例注入多个 Server。
 
 ## 多 Server 与生命周期
 

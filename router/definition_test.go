@@ -26,7 +26,7 @@ func TestDefinitionSeparatesMetadataAndRuntime(t *testing.T) {
 	if route.Metadata.Path != "/definition" || route.Metadata.Method != "GET" {
 		t.Fatalf("metadata = %#v", route.Metadata)
 	}
-	if route.Runtime.Binder == nil || !route.Runtime.MethodValue.IsValid() || route.Runtime.Controller == nil {
+	if route.Runtime.Binder == nil || !route.Runtime.MethodValue.IsValid() {
 		t.Fatal("route runtime is incomplete")
 	}
 	if route.Runtime.MethodValue.Type() != reflect.TypeOf((func(context.Context, *definitionRequest) error)(nil)) {

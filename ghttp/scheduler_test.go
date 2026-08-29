@@ -17,7 +17,23 @@ func TestServerOwnsIndependentSchedulers(t *testing.T) {
 	}
 }
 
-func TestServerRejectsSchedulerOwnedByAnotherServer(t *testing.T) {
+func TestDisabledServerSchedulerRemainsUsable(t *testing.T) {
+	server := NewServer(WithSchedulerOptions(SchedulerOptions{Enabled: false}))
+	if server.Scheduler() == nil {
+		t.Fatal("disabled server returned a nil scheduler")
+	}
+	if err := server.Scheduler().Add(scheduler.Job{
+		Name: "disabled-job", Schedule: scheduler.Every{Duration: time.Hour},
+		Handler: func(context.Context) error { return nil },
+	}); err != nil {
+		t.Fatalf("Add() on disabled scheduler failed: %v", err)
+	}
+	if len(server.Scheduler().Jobs()) != 1 {
+		t.Fatalf("Jobs() length = %d, want 1", len(server.Scheduler().Jobs()))
+	}
+}
+
+func TestServerDocumentsInjectedSchedulerOwnership(t *testing.T) {
 	manager, err := scheduler.New()
 	if err != nil {
 		t.Fatal(err)
@@ -27,8 +43,8 @@ func TestServerRejectsSchedulerOwnedByAnotherServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	second := NewServer(WithScheduler(manager))
-	if err := second.Err(); err == nil {
-		t.Fatal("sharing an injected scheduler between Servers was accepted")
+	if err := second.Err(); err != nil {
+		t.Fatalf("injected scheduler was rejected without global ownership tracking: %v", err)
 	}
 }
 

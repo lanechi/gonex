@@ -2,6 +2,7 @@ package router_test
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -11,6 +12,29 @@ import (
 
 type scannerRequest struct {
 	g.Meta `path:"/scanner" method:"GET"`
+}
+
+// Meta intentionally has the same name as the framework marker but a
+// different package-qualified type identity.
+type Meta struct{}
+
+type sameNamedMetaRequest struct {
+	Meta `path:"/same-named-meta" method:"GET"`
+}
+
+type pointerMetaRequest struct {
+	*g.Meta `path:"/pointer-meta" method:"GET"`
+}
+
+func TestParseMetaUsesTypeIdentity(t *testing.T) {
+	if _, err := router.ParseMeta(reflect.TypeOf((*sameNamedMetaRequest)(nil))); err == nil {
+		t.Fatal("ParseMeta() accepted a same-named non-framework Meta type")
+	}
+	if metadata, err := router.ParseMeta(reflect.TypeOf((*pointerMetaRequest)(nil))); err != nil {
+		t.Fatalf("ParseMeta() rejected *g.Meta: %v", err)
+	} else if metadata.Path != "/pointer-meta" {
+		t.Fatalf("metadata path = %q, want /pointer-meta", metadata.Path)
+	}
 }
 
 type scannerController struct{}

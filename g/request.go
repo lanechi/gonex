@@ -8,10 +8,11 @@ import (
 	"github.com/lanechi/gonex/config"
 	"github.com/lanechi/gonex/ghttp"
 	"github.com/lanechi/gonex/logging"
+	"github.com/lanechi/gonex/router"
 )
 
 // Meta marks a request structure as a declarative route definition.
-type Meta struct{}
+type Meta = router.Meta
 
 var (
 	serverRegistryMu sync.Mutex

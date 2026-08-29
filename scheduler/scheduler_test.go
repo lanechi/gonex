@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -94,6 +95,9 @@ func TestManagerValidatesNamesAndSchedules(t *testing.T) {
 	if err := manager.Add(Job{Name: "past", Schedule: Once{At: time.Now().Add(-time.Second)}, Handler: job.Handler}); err == nil {
 		t.Fatal("past one-time job was accepted")
 	}
+	if err := manager.Add(Job{Name: "once-immediate", Schedule: Once{At: time.Now().Add(time.Hour)}, RunImmediately: true, Handler: job.Handler}); err == nil {
+		t.Fatal("Once + RunImmediately was accepted")
+	}
 	if err := manager.Remove("unique"); err != nil {
 		t.Fatal(err)
 	}
@@ -138,6 +142,49 @@ func TestJobsAreSortedByName(t *testing.T) {
 	jobs := manager.Jobs()
 	if len(jobs) != 2 || jobs[0].Name != "alpha" || jobs[1].Name != "zulu" {
 		t.Fatalf("sorted jobs = %#v", jobs)
+	}
+}
+
+func TestMiddlewareRunsInRegistrationOrder(t *testing.T) {
+	manager, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var events []string
+	record := func(event string) { mu.Lock(); events = append(events, event); mu.Unlock() }
+	middleware := func(name string) Middleware {
+		return func(next Handler) Handler {
+			return func(ctx context.Context) error {
+				record(name + "-before")
+				err := next(ctx)
+				record(name + "-after")
+				return err
+			}
+		}
+	}
+	if err := manager.Use(middleware("A"), middleware("B")); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	if err := manager.Add(Job{Name: "ordered", Schedule: Every{Duration: time.Hour}, RunImmediately: true, Handler: func(context.Context) error { record("handler"); close(done); return nil }}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { manager.Stop(); _ = manager.Wait(context.Background()) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("job did not run")
+	}
+	mu.Lock()
+	got := append([]string(nil), events...)
+	mu.Unlock()
+	want := []string{"A-before", "B-before", "handler", "B-after", "A-after"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("events = %#v, want %#v", got, want)
 	}
 }
 
