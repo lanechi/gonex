@@ -41,14 +41,12 @@ func (storage *failingDeleteStorage) Delete(_ context.Context, id string) error 
 	return nil
 }
 
-func TestSessionCookieOptionsRejectInsecureSameSiteNone(t *testing.T) {
+func TestSessionCookieOptionsEnforceSecureSameSiteNone(t *testing.T) {
 	manager := NewSessionManager(nil, "", time.Hour)
-	before := manager.CookieOptions()
-	if err := manager.SetCookieOptions(CookieOptions{Path: "/", SameSite: http.SameSiteNoneMode}); err == nil {
-		t.Fatal("expected insecure SameSite=None to be rejected")
-	}
-	if after := manager.CookieOptions(); after != before {
-		t.Fatalf("invalid options mutated manager: before=%+v after=%+v", before, after)
+	manager.SetCookieOptions(CookieOptions{Path: "/", SameSite: http.SameSiteNoneMode})
+	after := manager.CookieOptions()
+	if !after.Secure || after.SameSite != http.SameSiteNoneMode {
+		t.Fatalf("SameSite=None did not force Secure: %+v", after)
 	}
 }
 
