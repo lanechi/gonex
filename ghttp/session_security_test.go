@@ -41,6 +41,21 @@ func (storage *failingDeleteStorage) Delete(_ context.Context, id string) error 
 	return nil
 }
 
+func newSessionTestContext(t *testing.T, manager *SessionManager) *Context {
+	t.Helper()
+	server := NewServer(WithSessionManager(manager))
+	if err := server.Err(); err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	ginContext, _ := gin.CreateTestContext(recorder)
+	ginContext.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+	ctx := newContext(ginContext)
+	ctx.server = server
+	ctx.sessionManager = manager
+	return ctx
+}
+
 func TestSessionCookieOptionsEnforceSecureSameSiteNone(t *testing.T) {
 	manager := NewSessionManager(nil, "", time.Hour)
 	manager.SetCookieOptions(CookieOptions{Path: "/", SameSite: http.SameSiteNoneMode})
@@ -53,17 +68,7 @@ func TestSessionCookieOptionsEnforceSecureSameSiteNone(t *testing.T) {
 func TestSessionRegenerateRollsBackWhenOldIDCannotBeDeleted(t *testing.T) {
 	storage := &failingDeleteStorage{values: make(map[string]map[string]any)}
 	manager := NewSessionManager(storage, "session_id", time.Hour)
-	server := NewServer(WithSessionManager(manager))
-	if err := server.Err(); err != nil {
-		t.Fatal(err)
-	}
-
-	recorder := httptest.NewRecorder()
-	ginContext, _ := gin.CreateTestContext(recorder)
-	ginContext.Request = httptest.NewRequest(http.MethodGet, "/", nil)
-	ctx := newContext(ginContext)
-	ctx.server = server
-	ctx.sessionManager = manager
+	ctx := newSessionTestContext(t, manager)
 
 	opened, err := manager.Open(ctx)
 	if err != nil {
@@ -82,5 +87,37 @@ func TestSessionRegenerateRollsBackWhenOldIDCannotBeDeleted(t *testing.T) {
 	}
 	if len(storage.values) != 1 {
 		t.Fatalf("replacement session leaked after rollback: %#v", storage.values)
+	}
+}
+
+func TestSessionLogoutKeepsHandleWhenStorageDeleteFails(t *testing.T) {
+	storage := &failingDeleteStorage{values: make(map[string]map[string]any)}
+	manager := NewSessionManager(storage, "session_id", time.Hour)
+	ctx := newSessionTestContext(t, manager)
+
+	opened, err := manager.Open(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldID := opened.ID()
+	if err := opened.Set("state", "active"); err != nil {
+		t.Fatal(err)
+	}
+	storage.failID = oldID
+	if err := opened.Logout(); err == nil {
+		t.Fatal("expected logout failure")
+	}
+	if opened.ID() != oldID {
+		t.Fatalf("session id changed after failed logout: got %q want %q", opened.ID(), oldID)
+	}
+	value, err := opened.Get("state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value != "active" {
+		t.Fatalf("session state lost after failed logout: %#v", value)
+	}
+	if err := opened.Set("retry", true); err != nil {
+		t.Fatalf("failed logout incorrectly marked session logged out: %v", err)
 	}
 }
