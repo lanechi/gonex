@@ -81,10 +81,39 @@ func TestOpenAPIInfersMultipartForFileUpload(t *testing.T) {
 	if err := server.Bind(&uploadController{}); err != nil {
 		t.Fatal(err)
 	}
-	document := server.OpenAPI()
-	operation := document.Paths["/upload"]["post"]
+	operation := server.OpenAPI().Paths["/upload"]["post"]
 	content := operation.RequestBody["content"].(map[string]any)
 	if _, ok := content["multipart/form-data"]; !ok {
 		t.Fatalf("multipart content missing: %#v", content)
+	}
+	if _, ok := content["application/x-www-form-urlencoded"]; ok {
+		t.Fatalf("file upload incorrectly exposed as URL-encoded form: %#v", content)
+	}
+	multipartSchema := content["multipart/form-data"].(map[string]any)["schema"].(map[string]any)
+	fileSchema := multipartSchema["properties"].(map[string]any)["file"].(map[string]any)
+	if fileSchema["type"] != "string" || fileSchema["format"] != "binary" {
+		t.Fatalf("file schema=%#v", fileSchema)
+	}
+}
+
+func TestOpenAPIAndSwaggerEndpointsShareOneSwitch(t *testing.T) {
+	server := ghttp.NewServer(ghttp.WithOpenAPI(ghttp.OpenAPIOptions{}))
+	for _, path := range []string{"/openapi.json", "/docs/"} {
+		response := httptest.NewRecorder()
+		server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusNotFound {
+			t.Errorf("%s status=%d", path, response.Code)
+		}
+	}
+	server.EnableOpenAPI(true)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("enabled OpenAPI status=%d", response.Code)
+	}
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/docs/", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("enabled Swagger status=%d", response.Code)
 	}
 }
