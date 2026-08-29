@@ -71,10 +71,10 @@ func assertCustomMiddlewareFailure(t *testing.T, response *httptest.ResponseReco
 		t.Fatalf("status=%d want=%d body=%s", response.Code, status, response.Body.String())
 	}
 	body := response.Body.String()
-	if !strings.Contains(body, `"custom":true`) && !strings.Contains(body, `"custom": true`) {
+	if !strings.Contains(body, "\"custom\":true") && !strings.Contains(body, "\"custom\": true") {
 		t.Fatalf("custom error handler was not used: %s", body)
 	}
-	if !strings.Contains(body, `"code":`+strconv.Itoa(code)) && !strings.Contains(body, `"code": `+strconv.Itoa(code)) {
+	if !strings.Contains(body, "\"code\":"+strconv.Itoa(code)) && !strings.Contains(body, "\"code\": "+strconv.Itoa(code)) {
 		t.Fatalf("custom error code was not used: %s", body)
 	}
 }
