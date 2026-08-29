@@ -90,7 +90,7 @@ gx:   gx/vX.Y.Z
 - Viper 配置；
 - Logger 抽象与 Zap 默认实现；
 - Host/CORS/CSRF/Body limit 等安全中间件；
-- Memory/Cookie Session；
+- Memory/Cookie Session，Cookie revocation 通过显式 store 持久化；
 - 模板与静态资源；
 - OpenAPI/Swagger；
 - lifecycle hooks、background tasks、优雅退出/重启；
@@ -197,6 +197,7 @@ ghttp.WithErrorHandler(...)
 
 - Gin 默认 trusted proxies 被关闭，只有显式配置的 proxies 才受信任；
 - `SameSite=None` 的 Session/CSRF Cookie 必须为 Secure；
+- Cookie 在 response headers 已提交后拒绝写入，避免 session token 已轮换但新 Cookie 无法发送；
 - Body、multipart memory、Header 都有默认上限；
 - release/test 模式不向客户端返回内部错误详情；
 - 静态资源有路径边界、symlink 和扩展名约束；静态挂载属于 Gin topology mutation，必须在 `Run*` 前完成，并与启动通过 `registrationMu` 序列化；
@@ -222,6 +223,39 @@ map[string]any
 - Cookie 与 Memory storage 对数字采用 `json.Number`，避免大整数被 float64 截断；
 - func、channel、cycle 等不可 JSON 编码值返回错误；
 - 不承诺保留任意 Go concrete type。
+
+### CookieStorage 与撤销状态
+
+Cookie session 是客户端持有的签名 token。仅验证 HMAC 不足以实现可靠的 `Regenerate` / `Logout`，因为旧 token 在过期前仍可能被重放。因此 `CookieStorage` **必须显式提供 `CookieRevocationStore`**：
+
+```go
+revocations := session.NewMemoryCookieRevocationStore()
+storage, err := session.NewCookieStorage(secret, revocations)
+if err != nil {
+    panic(err)
+}
+
+manager := ghttp.NewSessionManager(storage, "session_id", 24*time.Hour)
+server := ghttp.NewServer(ghttp.WithSessionManager(manager))
+```
+
+`MemoryCookieRevocationStore` 只适用于测试或明确的单进程场景，进程重启后状态会消失。生产环境如果要求 logout/revocation 跨重启或多实例生效，应实现共享的 `CookieRevocationStore`，例如用 Redis/数据库事务或 Lua 保证 family token 注册与 revoke 的原子性。core 不直接依赖 Redis client。
+
+撤销 store 接收的是 token/family 的 SHA-256 digest，不需要保存原始 Cookie 值。
+
+如果只通过配置文件启用 CookieStorage，必须显式声明进程内撤销：
+
+```yaml
+session:
+  storage:
+    type: cookie
+    secret: "至少 32 bytes 的高熵 secret"
+    revocation: memory
+```
+
+不写 `revocation: memory` 会作为初始化错误处理，而不是静默选择进程内状态。需要共享 store 时应通过 `WithSessionManager` 注入。
+
+Session mutation 的顺序保证：replacement cookie 先完成验证，旧 token/ID 的撤销或删除成功后才发布新 Cookie；`Logout` 的 authoritative storage/revocation 失败时保留当前 handle，以便调用方重试。
 
 ## Scheduler
 
@@ -259,7 +293,9 @@ type MutableScheduler interface {
 }
 ```
 
-`Replace` 用于持久任务 reconcile：验证和新 runtime 安装成功后才提交内存状态，并在 replacement 之间复用 overlap gate。
+`Replace` 用于持久任务 reconcile。运行中的 replacement 先创建为 **unpublished generation**：即使 engine 因 `RunImmediately` 触发，也必须等到旧 engine job 清理成功、manager state 提交后才允许执行；失败则 abort 新 generation。旧 record 的 cleanup orphan 先处理，正式 old handle 最后删除，避免 cleanup 失败时把当前有效任务先移除。
+
+跨 generation 复用同一个 overlap gate。已经被 `QueueOne` 接受的 trigger 是已承诺工作，后续 policy 切换不会把它静默清掉；policy 变化只影响未来 trigger。
 
 ### Overlap policy
 
@@ -326,6 +362,10 @@ Recorder 的 Start/Finish 与 Unlock cleanup 使用独立的 bounded background 
 ```text
 OnStart
   ↓
+listener bind
+  ↓
+HTTP Serve enters Accept
+  ↓
 OnStarted
   ↓
 Running
@@ -337,7 +377,13 @@ tracked tasks drain
 OnStop
 ```
 
-同一 phase 的并发调用共享 attempt/result；tracked task 使用 count + channel barrier，不在 Wait 期间调用 `WaitGroup.Add`。
+Lifecycle phase 不允许同步重入或并发等待自己：当 Start/Started/Shutdown/Stop 已有 phase invocation 在执行时，新的同步进入返回 `lifecycle.ErrPhaseInProgress`，而不是等待 active attempt。这样 `OnStart -> Shutdown`、`OnShutdown -> Stop`、`OnStop -> Stop` 等 hook 重入不会形成自等待死锁。
+
+startup hook 执行期间收到 shutdown 时会立即记录 shutdown intent、取消 tracked-task context，并返回 `lifecycle.ErrStartupInProgress`；Server 让 startup 解开后再执行真正 cleanup。
+
+tracked task 使用 `taskCount + taskDone channel` barrier，不使用会产生 Add/Wait ordering 限制的 `sync.WaitGroup`。
+
+Graceful restart 在 replacement process 真正进入 Serve/Accept 并发出 ready 信号后完成 ownership handoff。此时即使父进程后续 cleanup 返回错误，也不会再 kill 已接管流量的 child，避免 listener 已关闭后造成双端不可用。
 
 ## Template
 
@@ -352,6 +398,7 @@ Template Manager 的 root/functions/cache/watcher 由内部 RWMutex 管理。`Se
 - Write/Delete 拒绝同一路径和父子路径重叠；
 - 普通 file transaction 不允许删除目录；
 - DirectorySwap 拒绝相同或嵌套 target；
+- DirectorySwap 在任何 mutation 前同时拒绝 stage↔stage、stage↔target 的同路径/父子路径交叉重叠，避免备份一个 target 时把另一个 staged directory 一并搬走；
 - file/directory transaction 在整个事务生命周期持有同一个 `os.Root`；最终 backup/install/delete/rollback 都通过 descriptor-relative `Root.Rename` / `Root.Remove*` / `Root.MkdirAll` 完成，不使用“检查路径后再按字符串路径 rename”的 publication；
 - 写入失败使用 backup rollback；
 - `gx dao` 的生成目录只能放生成代码，不放业务手写文件；
@@ -383,11 +430,11 @@ go vet ./...
 
 ```bash
 for module in contrib/gormlog contrib/redislog examples/basic examples/demo examples/quick-demo benchmarks/gx; do
-  (cd "$module" && go mod tidy -diff && go test ./... && go vet ./...)
+  (cd "$module" && go mod tidy -diff && go test ./... && go test -race ./... && go vet ./...)
 done
 ```
 
-CI 使用同一矩阵，并额外在 macOS/Windows 验证 core + gx portability；稳定 v1 发布后还会执行 public API compatibility gate。并发、生命周期、动态 CORS、Scheduler snapshot/reconcile、Session snapshot 和 gx 文件事务都有回归测试。
+CI 使用同一矩阵，并额外在 macOS/Windows 验证 core + gx portability；稳定 v1 发布后还会执行 public API compatibility gate。并发、生命周期、动态 CORS、Scheduler snapshot/reconcile/overlap、Session snapshot/revocation 和 gx 文件事务都有回归测试。
 
 ## 开发原则
 
@@ -395,6 +442,7 @@ CI 使用同一矩阵，并额外在 macOS/Windows 验证 core + gx portability�
 - 核心接口围绕 HTTP runtime，不耦合数据库和 MQ；
 - scheduler persistence 存稳定 handler ID，不存 Go function reference；
 - Session 存 JSON-safe value，不承诺 arbitrary concrete type preservation；
+- Cookie revocation persistence 必须显式，不把 process-local blacklist 冒充多实例语义；
 - pre-v1 遇到错误 API 直接删除或重设计，不通过 alias/wrapper/forwarder 保留旧调用；
 - 并发边界必须明确：immutable snapshot、锁或显式 caller ownership 三选一；
 - 错误路径必须考虑 rollback 和资源释放；
