@@ -47,15 +47,13 @@ func (group *RouterGroup) Bind(controllers ...any) error {
 	}
 	routes := make([]router.Definition, 0)
 	for _, controller := range controllers {
-		controllerRoutes, err := scanController(controller)
+		controllerRoutes, err := router.ScanController(controller)
 		if err != nil {
 			return err
 		}
 		for index := range controllerRoutes {
 			route := &controllerRoutes[index]
-			metadata := route.Metadata
-			joinedPath := joinRoutePaths(group.prefix, metadata.Path)
-			route.Metadata.Path = joinedPath
+			route.Metadata.Path = joinRoutePaths(group.prefix, route.Metadata.Path)
 		}
 		routes = append(routes, controllerRoutes...)
 	}
