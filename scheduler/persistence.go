@@ -122,14 +122,14 @@ func WithInstanceID(id string) LoaderOption {
 }
 
 // NewLoader creates a storage-neutral persistent job loader.
-func NewLoader(store Store, registry HandlerRegistry, runtime Scheduler, options ...LoaderOption) (*Loader, error) {
-	if isNilValue(store) || isNilValue(registry) || isNilValue(runtime) {
+func NewLoader(store Store, registry HandlerRegistry, scheduler Scheduler, options ...LoaderOption) (*Loader, error) {
+	if isNilValue(store) || isNilValue(registry) || isNilValue(scheduler) {
 		return nil, fmt.Errorf("store, handler registry, and scheduler are required")
 	}
 	loader := &Loader{
 		store:     store,
 		registry:  registry,
-		scheduler: runtime,
+		scheduler: scheduler,
 		loaded:    make(map[string]loadedJob),
 	}
 	for _, option := range options {
