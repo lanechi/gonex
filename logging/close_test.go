@@ -35,6 +35,22 @@ func TestCloseClosesPackageOwnedFileOutput(t *testing.T) {
 	}
 }
 
+func TestDefaultLoggerStandardStreamSyncIsPortable(t *testing.T) {
+	configuration := DefaultConfig()
+	configuration.Caller = false
+	configuration.Stacktrace = false
+	logger, err := New(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := logger.Sync(); err != nil {
+		t.Fatalf("default logger sync: %v", err)
+	}
+	if err := Close(logger); err != nil {
+		t.Fatalf("default logger close: %v", err)
+	}
+}
+
 type closeTrackingWriter struct {
 	bytes.Buffer
 	closed int
