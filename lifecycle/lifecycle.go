@@ -193,9 +193,9 @@ func (lifecycle *Lifecycle) Start(ctx context.Context) error {
 }
 
 // BeginShutdown blocks new startup work, waits for any active startup phase to
-// finish, then cancels tracked tasks and runs shutdown hooks once. If the
-// caller's context expires while waiting for startup, no shutdown hook is run;
-// a later BeginShutdown call resumes the still-requested shutdown phase.
+// finish, then cancels tracked tasks and runs shutdown hooks once. Startup's
+// own result is intentionally not propagated: shutdown intent may cause that
+// startup attempt to return context.Canceled, while shutdown itself succeeded.
 func (lifecycle *Lifecycle) BeginShutdown(ctx context.Context) error {
 	if lifecycle == nil {
 		return nil
@@ -226,11 +226,11 @@ func (lifecycle *Lifecycle) BeginShutdown(ctx context.Context) error {
 	}
 	lifecycle.mu.Unlock()
 
-	if err := waitAttempt(ctx, startAttempt); err != nil {
+	if err := waitAttemptCompletion(ctx, startAttempt); err != nil {
 		lifecycle.finishShutdownAttempt(attempt, err, false)
 		return err
 	}
-	if err := waitAttempt(ctx, startedAttempt); err != nil {
+	if err := waitAttemptCompletion(ctx, startedAttempt); err != nil {
 		lifecycle.finishShutdownAttempt(attempt, err, false)
 		return err
 	}
@@ -387,6 +387,21 @@ func waitAttempt(ctx context.Context, attempt *phaseAttempt) error {
 	select {
 	case <-attempt.done:
 		return attempt.err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func waitAttemptCompletion(ctx context.Context, attempt *phaseAttempt) error {
+	if attempt == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-attempt.done:
+		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
