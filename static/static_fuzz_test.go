@@ -1,11 +1,11 @@
 package static
 
 import (
+	"io/fs"
 	"path"
 	"path/filepath"
 	"strings"
 	"testing"
-	"testing/fstest"
 )
 
 func FuzzSafeFilePath(f *testing.F) {
@@ -26,7 +26,7 @@ func FuzzSafeFilePath(f *testing.F) {
 		if !ok {
 			return
 		}
-		if got == "" || strings.Contains(got, `\\`) || path.IsAbs(got) || filepath.IsAbs(got) || path.Clean(got) != got || !fstest.TestFS(fstest.MapFS{got: &fstest.MapFile{Data: []byte("x")}}, got) {
+		if got == "" || strings.Contains(got, `\\`) || path.IsAbs(got) || filepath.IsAbs(got) || path.Clean(got) != got || !fs.ValidPath(got) {
 			t.Fatalf("unsafe path accepted: input=%q decoded=%q", value, got)
 		}
 	})
