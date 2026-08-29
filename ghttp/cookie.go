@@ -67,6 +67,12 @@ func (manager *CookieManager) prepare(name, value string, options CookieOptions)
 	return responseCookie, nil
 }
 
+func (manager *CookieManager) prepareDelete(name string, options CookieOptions) (*http.Cookie, error) {
+	options.MaxAge = -1
+	options.Expires = time.Unix(1, 0)
+	return manager.prepare(name, "", options)
+}
+
 func (manager *CookieManager) writePrepared(cookie *http.Cookie) {
 	if manager == nil || manager.context == nil || manager.context.gin == nil || cookie == nil {
 		return
@@ -84,7 +90,10 @@ func (manager *CookieManager) Set(name, value string, options CookieOptions) err
 }
 
 func (manager *CookieManager) Delete(name string, options CookieOptions) error {
-	options.MaxAge = -1
-	options.Expires = time.Unix(1, 0)
-	return manager.Set(name, "", options)
+	responseCookie, err := manager.prepareDelete(name, options)
+	if err != nil {
+		return err
+	}
+	manager.writePrepared(responseCookie)
+	return nil
 }
