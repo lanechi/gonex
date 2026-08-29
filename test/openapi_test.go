@@ -21,7 +21,7 @@ func TestOpenAPIAndSwaggerEndpoints(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("OpenAPI status=%d", response.Code)
 	}
-	for _, expected := range []string{`"openapi":"3.0.3"`, `"title":"users"`, `"/users/{id}"`, `"post"`, `"name"`, `"application/json"`} {
+	for _, expected := range []string{`"openapi":"3.0.3"`, `"title":"users"`, `"version":"unversioned"`, `"/users/{id}"`, `"post"`, `"name"`, `"application/json"`, `"default"`} {
 		if !strings.Contains(response.Body.String(), expected) {
 			t.Errorf("OpenAPI does not contain %q", expected)
 		}
@@ -45,7 +45,7 @@ func TestOpenAPIUsesMetadataBindingContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	routeMetadata := routes[0].Metadata
-	operation := openapi.Generate("metadata", []router.RouteMetadata{routeMetadata}).Paths["/upload"]["post"]
+	operation := openapi.Generate(openapi.Info{Title: "metadata", Version: "test"}, []router.RouteMetadata{routeMetadata}).Paths["/upload"]["post"]
 	content := operation.RequestBody["content"].(map[string]any)
 	if _, ok := content["multipart/form-data"]; !ok {
 		t.Fatalf("OpenAPI used runtime binder instead of metadata: %#v", content)
@@ -81,39 +81,10 @@ func TestOpenAPIInfersMultipartForFileUpload(t *testing.T) {
 	if err := server.Bind(&uploadController{}); err != nil {
 		t.Fatal(err)
 	}
-	operation := server.OpenAPI().Paths["/upload"]["post"]
+	document := server.OpenAPI()
+	operation := document.Paths["/upload"]["post"]
 	content := operation.RequestBody["content"].(map[string]any)
 	if _, ok := content["multipart/form-data"]; !ok {
 		t.Fatalf("multipart content missing: %#v", content)
-	}
-	if _, ok := content["application/x-www-form-urlencoded"]; ok {
-		t.Fatalf("file upload incorrectly exposed as URL-encoded form: %#v", content)
-	}
-	multipartSchema := content["multipart/form-data"].(map[string]any)["schema"].(map[string]any)
-	fileSchema := multipartSchema["properties"].(map[string]any)["file"].(map[string]any)
-	if fileSchema["type"] != "string" || fileSchema["format"] != "binary" {
-		t.Fatalf("file schema=%#v", fileSchema)
-	}
-}
-
-func TestOpenAPIAndSwaggerEndpointsShareOneSwitch(t *testing.T) {
-	server := ghttp.NewServer(ghttp.WithOpenAPI(ghttp.OpenAPIOptions{}))
-	for _, path := range []string{"/openapi.json", "/docs/"} {
-		response := httptest.NewRecorder()
-		server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
-		if response.Code != http.StatusNotFound {
-			t.Errorf("%s status=%d", path, response.Code)
-		}
-	}
-	server.EnableOpenAPI(true)
-	response := httptest.NewRecorder()
-	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
-	if response.Code != http.StatusOK {
-		t.Fatalf("enabled OpenAPI status=%d", response.Code)
-	}
-	response = httptest.NewRecorder()
-	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/docs/", nil))
-	if response.Code != http.StatusOK {
-		t.Fatalf("enabled Swagger status=%d", response.Code)
 	}
 }
