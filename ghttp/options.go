@@ -148,8 +148,10 @@ func WithRequestID(enabled bool) Option {
 	}
 }
 
-// WithEngine supplies a Gin engine. It is primarily useful for integrating
-// an existing Gin setup while keeping the framework's route registry.
+// WithEngine supplies a Gin engine. Gonex retains the supplied engine instance
+// but still installs framework middleware and resets Gin's trusted-proxy list
+// to the framework-safe default during initialization. Call SetTrustedProxies
+// on the constructed Server when the application intentionally trusts proxies.
 func WithEngine(engine *gin.Engine) Option {
 	return func(server *Server) {
 		if engine != nil {
@@ -165,7 +167,6 @@ func WithLogger(logger logging.Logger) Option {
 			server.logger = logger
 			server.options.Logger = optional[logging.Logger]{Value: logger, Set: true}
 		}
-	}
 }
 
 // WithScheduler supplies a scheduler whose lifecycle is managed exclusively by
@@ -248,11 +249,17 @@ func WithCORS(configuration CORSOptions) Option {
 	}
 }
 
-// WithResponseEncoder replaces the default success response encoder.
+// WithResponseEncoder replaces the default success response encoder. The
+// built-in OpenAPI response schema describes only the default gonex envelope,
+// so supplying a custom encoder disables the built-in OpenAPI endpoints by
+// default. A later WithOpenAPI option may explicitly re-enable them when the
+// application intentionally accepts or replaces that documentation contract.
 func WithResponseEncoder(encoder ResponseEncoder) Option {
 	return func(server *Server) {
 		if encoder != nil {
 			server.responseEncoder = encoder
+			server.openapiEnabled = false
+			server.options.OpenAPI = optional[OpenAPIOptions]{Value: OpenAPIOptions{Enabled: false}, Set: true}
 		}
 	}
 }
@@ -356,7 +363,6 @@ func WithTemplateRoot(root string) Option {
 				server.addInitializationError(fmt.Errorf("configure template root: %w", err))
 			}
 		}
-	}
 }
 
 // WithAllowedHosts limits accepted Host headers.
