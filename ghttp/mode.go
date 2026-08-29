@@ -27,7 +27,7 @@ func WithMode(mode string) Option {
 // Mode returns the Gin mode used by this Server.
 func (server *Server) Mode() string {
 	if server == nil || server.mode == "" {
-		return gin.Mode()
+		return ReleaseMode
 	}
 	return server.mode
 }
@@ -49,8 +49,8 @@ func (server *Server) applyModeConfig() {
 	normalized, err := normalizeGinMode(mode)
 	if err != nil {
 		server.addInitializationError(err)
-		server.mode = gin.Mode()
-		server.debug = server.mode == DebugMode
+		server.mode = ReleaseMode
+		server.debug = false
 		return
 	}
 	server.mode = normalized
@@ -60,7 +60,7 @@ func (server *Server) applyModeConfig() {
 func normalizeGinMode(mode string) (string, error) {
 	mode = strings.ToLower(strings.TrimSpace(mode))
 	if mode == "" {
-		return gin.Mode(), nil
+		return ReleaseMode, nil
 	}
 	switch mode {
 	case DebugMode, ReleaseMode, TestMode:

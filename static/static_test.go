@@ -1,7 +1,6 @@
 package static
 
 import (
-	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -140,7 +139,7 @@ func TestMountFSRejectsEscapesAndHonorsCustomAllowlist(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(root, "outside.txt")); err != nil {
 		t.Fatal(err)
 	}
-	var filesystem fs.FS = os.DirFS(root)
+	filesystem := os.DirFS(root)
 	engine := gin.New()
 	if err := MountFS(engine, "/files", filesystem, Options{Extensions: []string{".txt"}}); err != nil {
 		t.Fatal(err)

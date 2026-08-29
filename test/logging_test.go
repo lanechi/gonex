@@ -44,7 +44,7 @@ func TestGinOutputUsesTheUnifiedLogger(t *testing.T) {
 	t.Cleanup(func() { gin.SetMode(previousMode) })
 
 	logger := &recordingLogger{}
-	server := ghttp.NewServer(ghttp.WithLogger(logger))
+	server := ghttp.NewServer(ghttp.WithLogger(logger), ghttp.WithMode(ghttp.DebugMode))
 	if gin.DefaultWriter == nil || gin.DefaultErrorWriter == nil {
 		t.Fatal("Gin writers were not configured")
 	}
