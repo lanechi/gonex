@@ -16,7 +16,7 @@ func FuzzSafeFilePath(f *testing.F) {
 		"%2e%2e/secret.txt",
 		"%252e%252e%252fsecret.txt",
 		"/absolute.js",
-		`..\\secret.js`,
+		"..\\secret.js",
 		"a/./b.js",
 	} {
 		f.Add(seed)
@@ -26,21 +26,21 @@ func FuzzSafeFilePath(f *testing.F) {
 		if !ok {
 			return
 		}
-		if got == "" || strings.Contains(got, `\\`) || path.IsAbs(got) || filepath.IsAbs(got) || path.Clean(got) != got || !fs.ValidPath(got) {
+		if got == "" || strings.Contains(got, "\\") || path.IsAbs(got) || filepath.IsAbs(got) || path.Clean(got) != got || !fs.ValidPath(got) {
 			t.Fatalf("unsafe path accepted: input=%q decoded=%q", value, got)
 		}
 	})
 }
 
 func FuzzValidMountPath(f *testing.F) {
-	for _, seed := range []string{"/", "/assets", "assets", "/a/../b", "/a%2fb", `/a\\b`, "/a?b", "/a#b"} {
+	for _, seed := range []string{"/", "/assets", "assets", "/a/../b", "/a%2fb", "/a\\b", "/a?b", "/a#b"} {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, value string) {
 		if !validMountPath(value) {
 			return
 		}
-		if !strings.HasPrefix(value, "/") || strings.ContainsAny(value, `\\?#`) || path.Clean(value) != value {
+		if !strings.HasPrefix(value, "/") || strings.ContainsAny(value, "\\?#") || path.Clean(value) != value {
 			t.Fatalf("unsafe mount path accepted: %q", value)
 		}
 	})
