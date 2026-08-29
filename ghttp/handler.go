@@ -8,8 +8,7 @@ import (
 	"github.com/lanechi/gonex/router"
 )
 
-// Response is the default success envelope used by the initial framework
-// implementation. The encoder becomes replaceable in Phase 2.
+// Response is the default success envelope used by the framework.
 type Response struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
@@ -28,7 +27,7 @@ func (server *Server) handlerFor(route router.Definition) gin.HandlerFunc {
 		frameworkContext.logger = requestLoggerFromGin(server, ginContext)
 		requestContext := context.WithValue(ginContext.Request.Context(), contextKey{}, frameworkContext)
 		requestValue := reflect.New(requestType.Elem())
-		if err := runtime.Binder.Bind(ginContext, requestValue.Interface()); err != nil {
+		if err := runtime.Binder.Bind(ginContext, requestValue.Interface(), server.maxMultipartMemory); err != nil {
 			server.handleError(frameworkContext, frameworkError(err))
 			return
 		}
