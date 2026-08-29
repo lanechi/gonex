@@ -2,6 +2,8 @@ module github.com/lanechi/gonex
 
 go 1.26.0
 
+toolchain go1.26.7
+
 require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/gin-contrib/cors v1.7.6
