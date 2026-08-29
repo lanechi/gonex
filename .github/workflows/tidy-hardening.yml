@@ -1,0 +1,41 @@
+name: hardening-tidy
+
+on:
+  push:
+    branches: [hardening-final-20260828]
+
+permissions:
+  contents: write
+
+jobs:
+  tidy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: hardening-final-20260828
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Tidy every Go module
+        shell: bash
+        run: |
+          set -euo pipefail
+          for module in . gx contrib/gormlog contrib/redislog examples/basic examples/demo examples/quick-demo benchmarks/gx; do
+            echo "tidy $module"
+            (cd "$module" && go mod tidy)
+          done
+      - name: Commit exact tidy output
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- go.mod go.sum gx/go.mod gx/go.sum contrib/gormlog/go.mod contrib/gormlog/go.sum contrib/redislog/go.mod contrib/redislog/go.sum examples/basic/go.mod examples/basic/go.sum examples/demo/go.mod examples/demo/go.sum examples/quick-demo/go.mod examples/quick-demo/go.sum benchmarks/gx/go.mod benchmarks/gx/go.sum; then
+            echo "all modules already tidy"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- go.mod go.sum gx/go.mod gx/go.sum contrib/gormlog/go.mod contrib/gormlog/go.sum contrib/redislog/go.mod contrib/redislog/go.sum examples/basic/go.mod examples/basic/go.sum examples/demo/go.mod examples/demo/go.sum examples/quick-demo/go.mod examples/quick-demo/go.sum benchmarks/gx/go.mod benchmarks/gx/go.sum
+          git commit -m "build: tidy hardening module graph"
+          git push origin HEAD:hardening-final-20260828
