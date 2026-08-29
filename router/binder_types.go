@@ -44,11 +44,13 @@ type FieldBinding struct {
 	File       string
 }
 
-// Binder executes the request binding plan compiled during route
-// registration. It is safe to reuse for requests of the same type.
+// Binder executes the request binding plan compiled during route registration.
+// Fields is a compatibility snapshot for inspection; mutating it does not alter
+// the private runtime binding plan.
 type Binder struct {
-	fields             []FieldBinding
+	Fields             []FieldBinding
 	MaxMultipartMemory int64
+	fields             []FieldBinding
 	hasQuery           bool
 	hasBindingRules    bool
 	hasValidateRules   bool
