@@ -137,6 +137,7 @@ func TestSessionLogoutPreflightsCookieBeforeRevocation(t *testing.T) {
 	}
 	oldID := opened.ID()
 	ctx.gin.Writer.WriteHeader(http.StatusOK)
+	ctx.gin.Writer.WriteHeaderNow()
 
 	if err := opened.Logout(); err == nil {
 		t.Fatal("expected logout failure after response headers were written")
