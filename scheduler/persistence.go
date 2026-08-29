@@ -33,10 +33,11 @@ type JobDefinition struct {
 	ExecutionMode ExecutionMode
 }
 
-// Execution is the input passed to a persistent handler.
+// Execution is the immutable input passed to a persistent handler. Definition
+// is cloned for each run, including Payload, so handler mutation cannot change
+// loader state or later executions.
 type Execution struct {
 	Definition JobDefinition
-	Payload    json.RawMessage
 }
 
 // PersistentHandler executes a persistent job definition.
@@ -85,11 +86,13 @@ type Store interface {
 	List(context.Context) ([]JobDefinition, error)
 }
 
-// Loader synchronizes enabled definitions into a runtime Scheduler.
+// Loader synchronizes enabled definitions into a MutableScheduler. Atomic
+// Validate/Replace semantics are mandatory; persistent reconciliation never
+// degrades to a remove-then-add compatibility path.
 type Loader struct {
 	store      Store
 	registry   HandlerRegistry
-	scheduler  Scheduler
+	scheduler  MutableScheduler
 	mu         sync.Mutex
 	loaded     map[string]loadedJob
 	locker     Locker
@@ -122,7 +125,7 @@ func WithInstanceID(id string) LoaderOption {
 }
 
 // NewLoader creates a storage-neutral persistent job loader.
-func NewLoader(store Store, registry HandlerRegistry, scheduler Scheduler, options ...LoaderOption) (*Loader, error) {
+func NewLoader(store Store, registry HandlerRegistry, scheduler MutableScheduler, options ...LoaderOption) (*Loader, error) {
 	if isNilValue(store) || isNilValue(registry) || isNilValue(scheduler) {
 		return nil, fmt.Errorf("store, handler registry, and scheduler are required")
 	}
@@ -203,26 +206,31 @@ type Locker interface {
 type RunStatus string
 
 const (
-	RunSuccess RunStatus = "success"
-	RunFailed  RunStatus = "failed"
-	RunSkipped RunStatus = "skipped"
-	RunTimeout RunStatus = "timeout"
+	RunRunning  RunStatus = "running"
+	RunSuccess  RunStatus = "success"
+	RunFailed   RunStatus = "failed"
+	RunSkipped  RunStatus = "skipped"
+	RunTimeout  RunStatus = "timeout"
+	RunCanceled RunStatus = "canceled"
 )
 
-// RunRecord is a storage-neutral execution history record.
+// RunRecord is a storage-neutral execution history record. StartedAt is the
+// actual framework execution start time; no synthetic scheduled timestamp is
+// reported because the runtime engine does not expose one reliably.
 type RunRecord struct {
-	RunID       string
-	JobID       string
-	InstanceID  string
-	ScheduledAt time.Time
-	StartedAt   time.Time
-	FinishedAt  time.Time
-	Status      RunStatus
-	Error       string
-	Duration    time.Duration
+	RunID      string
+	JobID      string
+	InstanceID string
+	StartedAt  time.Time
+	FinishedAt time.Time
+	Status     RunStatus
+	Error      string
+	Duration   time.Duration
 }
 
-// RunRecorder records persistent execution start and completion.
+// RunRecorder records persistent execution start and completion. Recorder
+// failures are observability failures: they are returned to scheduler logging
+// but never suppress the business handler.
 type RunRecorder interface {
 	Start(context.Context, RunRecord) error
 	Finish(context.Context, RunRecord) error
