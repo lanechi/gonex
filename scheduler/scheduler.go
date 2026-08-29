@@ -28,8 +28,8 @@ var (
 	ErrJobNotFound = errors.New("scheduler job not found")
 )
 
-// manager is the built-in Scheduler implementation. It is safe for concurrent
-// registration, inspection, execution, and shutdown.
+// manager is the built-in MutableScheduler implementation. It is safe for
+// concurrent registration, inspection, execution, replacement, and shutdown.
 type manager struct {
 	mu               sync.RWMutex
 	inner            gocron.Scheduler
@@ -57,6 +57,12 @@ type jobRecord struct {
 	gate       *overlapGate
 }
 
+type jobSnapshot struct {
+	definition Job
+	inner      gocron.Job
+	gate       *overlapGate
+}
+
 // SetDefaultLogger supplies a logger when the scheduler was not constructed
 // with WithLogger. ghttp.Server uses it to inherit its own Logger.
 func (manager *manager) SetDefaultLogger(logger logging.Logger) {
@@ -74,7 +80,7 @@ func (manager *manager) SetDefaultLogger(logger logging.Logger) {
 // the engine shutdown context. A duplicate start returns ErrStarted.
 func (manager *manager) Start(ctx context.Context) error {
 	if manager == nil {
-		return nil
+		return ErrStopped
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -118,11 +124,7 @@ func (manager *manager) Stop() {
 		return
 	}
 	manager.mu.Lock()
-	if manager.stopped {
-		manager.mu.Unlock()
-		return
-	}
-	if manager.stopping {
+	if manager.stopped || manager.stopping {
 		manager.mu.Unlock()
 		return
 	}
@@ -138,7 +140,6 @@ func (manager *manager) Stop() {
 		manager.stopped = true
 		manager.stopping = false
 		close(attempt.done)
-		manager.stopAttempt = attempt
 		manager.mu.Unlock()
 		return
 	}
@@ -177,7 +178,7 @@ func (manager *manager) Wait(ctx context.Context) error {
 	}
 }
 
-// Add registers a named job. The name must be unique for this Manager.
+// Add registers a named job. The name must be unique for this manager.
 func (manager *manager) Add(job Job) error {
 	if manager == nil {
 		return ErrStopped
@@ -204,10 +205,11 @@ func (manager *manager) Add(job Job) error {
 	return nil
 }
 
-// replace atomically updates an existing built-in job while preserving its
-// overlap gate. Persistent Loader uses this private capability so a running old
-// version and a newly scheduled version cannot bypass SkipIfRunning/QueueOne.
-func (manager *manager) replace(job Job) error {
+// Replace atomically updates an existing job while preserving its overlap
+// gate. The old overlap policy remains active until the replacement is fully
+// installed and the old engine job has been removed, preventing a transition
+// to a more permissive policy from opening a temporary overlap window.
+func (manager *manager) Replace(job Job) error {
 	if manager == nil {
 		return ErrStopped
 	}
@@ -224,37 +226,48 @@ func (manager *manager) replace(job Job) error {
 	if !exists {
 		return fmt.Errorf("%w: %s", ErrJobNotFound, job.Name)
 	}
-	if old.gate == nil {
-		old.gate = &overlapGate{policy: old.definition.OverlapPolicy}
+	gate := old.gate
+	if gate == nil {
+		gate = &overlapGate{policy: old.definition.OverlapPolicy}
+		old.gate = gate
 	}
-	old.gate.setPolicy(job.OverlapPolicy)
-	replacement := &jobRecord{definition: job, gate: old.gate}
+	replacement := &jobRecord{definition: job, gate: gate}
 	if manager.started {
 		if err := manager.installLocked(replacement); err != nil {
-			old.gate.setPolicy(old.definition.OverlapPolicy)
 			return err
 		}
 		if old.inner != nil {
 			if err := manager.inner.RemoveJob(old.inner.ID()); err != nil {
-				_ = manager.inner.RemoveJob(replacement.inner.ID())
-				old.gate.setPolicy(old.definition.OverlapPolicy)
+				if replacement.inner != nil {
+					_ = manager.inner.RemoveJob(replacement.inner.ID())
+				}
 				return fmt.Errorf("replace scheduler job %q: remove old job: %w", job.Name, err)
 			}
 		}
 	}
+	gate.setPolicy(job.OverlapPolicy)
 	manager.jobs[job.Name] = replacement
 	return nil
 }
 
-func (manager *manager) validate(job Job) error {
+// Validate checks a job against the exact location and validation rules used
+// by this scheduler without changing runtime state.
+func (manager *manager) Validate(job Job) error {
 	if manager == nil {
 		return ErrStopped
 	}
-	return validateJob(cloneJob(job), manager.location)
+	manager.mu.RLock()
+	location := manager.location
+	stopped := manager.stopped || manager.stopping
+	manager.mu.RUnlock()
+	if stopped {
+		return ErrStopped
+	}
+	return validateJob(cloneJob(job), location)
 }
 
-// Remove deletes a job by name. Existing executions receive cancellation when
-// Stop is called; removing a job only prevents future scheduling.
+// Remove deletes a job by name. Removing a job prevents future triggers but
+// does not cancel an execution already in progress.
 func (manager *manager) Remove(name string) error {
 	if manager == nil {
 		return ErrJobNotFound
@@ -275,15 +288,21 @@ func (manager *manager) Remove(name string) error {
 	return nil
 }
 
-// Jobs returns a snapshot that does not expose mutable engine state.
+// Jobs returns an immutable snapshot. All mutable record fields are copied
+// while the manager lock is held; engine inspection happens afterward so it
+// cannot race with Start installing engine handles into pre-registered jobs.
 func (manager *manager) Jobs() []JobInfo {
 	if manager == nil {
 		return nil
 	}
 	manager.mu.RLock()
-	records := make([]*jobRecord, 0, len(manager.jobs))
+	records := make([]jobSnapshot, 0, len(manager.jobs))
 	for _, record := range manager.jobs {
-		records = append(records, record)
+		records = append(records, jobSnapshot{
+			definition: cloneJob(record.definition),
+			inner:      record.inner,
+			gate:       record.gate,
+		})
 	}
 	manager.mu.RUnlock()
 
@@ -294,10 +313,7 @@ func (manager *manager) Jobs() []JobInfo {
 			nextRun, _ = record.inner.NextRun()
 			lastRun, _ = record.inner.LastRunStartedAt()
 		}
-		running := false
-		if record.gate != nil {
-			running = record.gate.isRunning()
-		}
+		running := record.gate != nil && record.gate.isRunning()
 		jobs = append(jobs, JobInfo{
 			Name:     record.definition.Name,
 			Schedule: record.definition.Schedule,
