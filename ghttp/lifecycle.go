@@ -113,7 +113,10 @@ func (server *Server) runContext(ctx context.Context, address string, tlsEnabled
 	}
 	baseListener := listener
 	if tlsEnabled {
-		server.prepareTLSConfig()
+		if err := server.prepareTLSConfig(certFile, keyFile); err != nil {
+			_ = baseListener.Close()
+			return errors.Join(err, server.cleanupFailedStart())
+		}
 	}
 	server.logListening(tlsEnabled)
 	server.listenerMu.Lock()
@@ -131,7 +134,10 @@ func (server *Server) runContext(ctx context.Context, address string, tlsEnabled
 	errorsChannel := make(chan error, 1)
 	go func() {
 		if tlsEnabled {
-			errorsChannel <- server.httpServer.ServeTLS(servingListener, certFile, keyFile)
+			// The certificate was loaded before serving, so empty paths make
+			// ServeTLS use TLSConfig.Certificates while it still performs the
+			// standard library's ALPN/HTTP2 setup.
+			errorsChannel <- server.httpServer.ServeTLS(servingListener, "", "")
 			return
 		}
 		errorsChannel <- server.httpServer.Serve(servingListener)
@@ -175,17 +181,23 @@ func (server *Server) runContext(ctx context.Context, address string, tlsEnabled
 	}
 }
 
-func (server *Server) prepareTLSConfig() {
+func (server *Server) prepareTLSConfig(certFile, keyFile string) error {
+	certificate, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return fmt.Errorf("load TLS certificate: %w", err)
+	}
 	configuration := server.httpServer.TLSConfig
 	if configuration == nil {
 		configuration = &tls.Config{}
 	} else {
 		configuration = configuration.Clone()
 	}
+	configuration.Certificates = []tls.Certificate{certificate}
 	if configuration.MinVersion == 0 || configuration.MinVersion < tls.VersionTLS12 {
 		configuration.MinVersion = tls.VersionTLS12
 	}
 	server.httpServer.TLSConfig = configuration
+	return nil
 }
 
 func (server *Server) cleanupFailedStart() error {
