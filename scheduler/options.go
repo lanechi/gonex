@@ -40,8 +40,9 @@ func WithLogger(logger logging.Logger) Option {
 	}
 }
 
-// New creates an independent scheduler.
-func New(options ...Option) (Scheduler, error) {
+// New creates an independent scheduler that supports both runtime operations
+// and atomic persistent reconciliation.
+func New(options ...Option) (MutableScheduler, error) {
 	configuration := managerOptions{location: time.Local, logger: logging.NewNopLogger()}
 	for _, option := range options {
 		if option != nil {
@@ -54,7 +55,7 @@ func New(options ...Option) (Scheduler, error) {
 }
 
 // MustNew creates a scheduler and panics when an Option is invalid.
-func MustNew(options ...Option) Scheduler {
+func MustNew(options ...Option) MutableScheduler {
 	manager, err := New(options...)
 	if err != nil {
 		panic(fmt.Sprintf("create scheduler: %v", err))
