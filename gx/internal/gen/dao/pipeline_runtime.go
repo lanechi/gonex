@@ -48,19 +48,28 @@ func (Pipeline) Run(project Project, options ModelOptions) (result Result, err e
 		return Result{}, fmt.Errorf("dao stage: %w", err)
 	}
 	defer func() {
-		if err == nil || staged.Transaction == nil {
+		if err == nil {
 			return
 		}
-		rollbackErr := staged.Transaction.Rollback()
-		moduleErr := restoreModuleFiles(discovery.Project.Root, discovery.ModuleBefore)
-		if rollbackErr != nil || moduleErr != nil {
-			err = errors.Join(err, rollbackErr, moduleErr)
+		if rollbackErr := rollbackFailedStage(discovery.Project.Root, discovery.ModuleBefore, staged.Transaction); rollbackErr != nil {
+			err = errors.Join(err, rollbackErr)
 		}
 	}()
 	if err := commit(&staged); err != nil {
 		return Result{}, fmt.Errorf("dao commit: %w", err)
 	}
 	return staged.Result, nil
+}
+
+// rollbackFailedStage restores directory and module state only while publication
+// is still reversible. DirectoryTransaction.Commit marks publication committed
+// before backup/root-handle cleanup, so a cleanup-only failure must not restore
+// the old go.mod/go.sum while leaving the new DAO/Entity directories published.
+func rollbackFailedStage(projectRoot string, moduleBefore map[string][]byte, transaction *genfs.DirectoryTransaction) error {
+	if transaction == nil || transaction.Committed() {
+		return nil
+	}
+	return errors.Join(transaction.Rollback(), restoreModuleFiles(projectRoot, moduleBefore))
 }
 
 func discover(project Project, options ModelOptions) (Discovery, error) {
