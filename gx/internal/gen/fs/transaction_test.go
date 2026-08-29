@@ -12,6 +12,7 @@ func TestTransactionStagesAndCommitsFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer transaction.Rollback()
 	if err := transaction.Write("internal/generated/file.go", []byte("package generated\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -33,6 +34,7 @@ func TestTransactionRejectsEscapeAndRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer transaction.Rollback()
 	if err := transaction.Write("../outside.go", []byte("bad"), 0o644); err == nil {
 		t.Fatal("path traversal was accepted")
 	}
@@ -54,6 +56,7 @@ func TestTransactionCommitsWritesAndDeletesTogether(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer transaction.Rollback()
 	if err := transaction.Write("internal/generated/new.go", []byte("new"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -81,6 +84,7 @@ func TestTransactionRejectsSymlinkAndConflictingOperations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer transaction.Rollback()
 	if err := transaction.Write("link/file.go", []byte("bad"), 0o644); err == nil {
 		t.Fatal("symlink escape was accepted")
 	}
@@ -110,6 +114,7 @@ func TestTransactionRejectsExistingDirectoryWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer transaction.Rollback()
 	if err := transaction.Write("folder", []byte("bad"), 0o644); err == nil {
 		t.Fatal("write to directory was accepted")
 	}
