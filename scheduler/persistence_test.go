@@ -50,17 +50,11 @@ type memoryJobStore struct {
 func (store *memoryJobStore) List(context.Context) ([]JobDefinition, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	return append([]JobDefinition(nil), store.jobs...), nil
-}
-func (store *memoryJobStore) Get(_ context.Context, id string) (JobDefinition, error) {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	for _, job := range store.jobs {
-		if job.ID == id {
-			return job, nil
-		}
+	result := make([]JobDefinition, len(store.jobs))
+	for index, job := range store.jobs {
+		result[index] = cloneJobDefinition(job)
 	}
-	return JobDefinition{}, context.Canceled
+	return result, nil
 }
 
 func TestLoaderSynchronizesVersionedDefinitions(t *testing.T) {
@@ -70,8 +64,7 @@ func TestLoaderSynchronizesVersionedDefinitions(t *testing.T) {
 	}
 	store := &memoryJobStore{jobs: []JobDefinition{{ID: "1", Name: "sync", Handler: "sync", Schedule: Every{Duration: time.Hour}, Version: 1, Enabled: true, ExecutionMode: EveryInstance}}}
 	registry := NewHandlerRegistry()
-	called := make(chan struct{}, 1)
-	if err := registry.Register("sync", func(context.Context, Execution) error { called <- struct{}{}; return nil }); err != nil {
+	if err := registry.Register("sync", func(context.Context, Execution) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	loader, err := NewLoader(store, registry, manager)
@@ -90,7 +83,9 @@ func TestLoaderSynchronizesVersionedDefinitions(t *testing.T) {
 	if got := manager.Jobs(); len(got) != 1 {
 		t.Fatalf("unchanged sync duplicated jobs: %#v", got)
 	}
+	store.mu.Lock()
 	store.jobs[0].Version = 2
+	store.mu.Unlock()
 	if err := loader.Sync(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -121,12 +116,12 @@ func TestLoaderSingletonAndRecorder(t *testing.T) {
 	}
 	lock := &testLock{unlocked: make(chan struct{})}
 	recorder := &testRecorder{}
-	loader, err := NewLoader(&memoryJobStore{jobs: []JobDefinition{{ID: "1", Name: "single", Handler: "run", Schedule: Every{Duration: time.Hour}, Enabled: true, ExecutionMode: Singleton}}}, NewHandlerRegistry(), manager, WithLocker(&testLocker{lock: lock, acquired: true}), WithRunRecorder(recorder))
+	loader, err := NewLoader(&memoryJobStore{jobs: []JobDefinition{{ID: "1", Name: "single", Handler: "run", Schedule: Every{Duration: time.Hour}, Enabled: true, ExecutionMode: Singleton, Payload: []byte(`{"value":1}`)}}}, NewHandlerRegistry(), manager, WithLocker(&testLocker{lock: lock, acquired: true}), WithRunRecorder(recorder))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := loader.registry.Register("run", func(ctx context.Context, execution Execution) error {
-		execution.Payload = append(execution.Payload, 'x')
+		execution.Definition.Payload = append(execution.Definition.Payload, 'x')
 		return ctx.Err()
 	}); err != nil {
 		t.Fatal(err)
@@ -151,6 +146,9 @@ func TestLoaderSingletonAndRecorder(t *testing.T) {
 	defer recorder.mu.Unlock()
 	if len(recorder.records) != 2 || recorder.records[0].RunID == "" || recorder.records[0].RunID != recorder.records[1].RunID {
 		t.Fatalf("records = %#v", recorder.records)
+	}
+	if recorder.records[0].Status != RunRunning || recorder.records[1].Status != RunSuccess {
+		t.Fatalf("statuses = %q, %q", recorder.records[0].Status, recorder.records[1].Status)
 	}
 }
 
@@ -206,4 +204,4 @@ func TestLoaderRejectsDuplicateIDs(t *testing.T) {
 	}
 }
 
-func newTestScheduler() Scheduler { manager, _ := New(); return manager }
+func newTestScheduler() MutableScheduler { manager, _ := New(); return manager }
