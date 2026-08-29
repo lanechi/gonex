@@ -1,0 +1,135 @@
+name: hardening-docs
+
+on:
+  push:
+    branches: [hardening-final-20260828]
+
+permissions:
+  contents: write
+
+jobs:
+  update-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: hardening-final-20260828
+      - name: Update README and AGENTS contracts
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              if old not in text:
+                  raise SystemExit(f"missing docs anchor in {path}: {old[:80]!r}")
+              p.write_text(text.replace(old, new, 1))
+
+          replace(
+              "README.md",
+              "数据库、缓存、消息队列不是核心运行时依赖。业务项目自行持有这些基础设施的 client 与生命周期；可选适配放在 `contrib/`，代码生成器 `gx` 是独立 Go module。",
+              "数据库、缓存、消息队列不是核心运行时依赖。业务项目自行持有这些基础设施的 client 与生命周期。`contrib/gormlog` 与 `contrib/redislog` 各自是独立 Go module，因此 GORM/Redis 不进入 core module 的依赖图；代码生成器 `gx` 也是独立 Go module。",
+          )
+          replace(
+              "README.md",
+              "安装 `gx`：\n\n```bash\ngo install github.com/lanechi/gonex/gx@latest\ngx --help\n```\n\n核心 module 与 `gx` 使用独立版本标签：",
+              "安装 `gx`：\n\n```bash\ngo install github.com/lanechi/gonex/gx@latest\ngx --help\n```\n\n按需安装第三方日志适配：\n\n```bash\ngo get github.com/lanechi/gonex/contrib/gormlog\ngo get github.com/lanechi/gonex/contrib/redislog\n```\n\n这两个 `contrib` 包是独立 module，不会把 GORM/Redis 加入只使用 gonex core 的应用依赖图。\n\n核心 module 与 `gx` 使用独立版本标签：",
+          )
+          replace(
+              "README.md",
+              "```text\nGET /openapi.json\nGET /docs/\n```",
+              "```text\nGET /openapi.json\nGET /docs/\n```\n\nOpenAPI `info.title` 默认使用 Server name；`info.version` 默认是 `unversioned`。应用可通过 `server.openapi.title` 和 `server.openapi.version` 显式声明文档身份。未单独声明的应用错误状态由 OpenAPI `default` response 覆盖。",
+          )
+          replace(
+              "README.md",
+              "- 静态资源有路径边界、symlink 和扩展名约束；",
+              "- 静态资源有路径边界、symlink 和扩展名约束；静态挂载属于 Gin topology mutation，必须在 `Run*` 前完成，并与启动通过 `registrationMu` 序列化；",
+          )
+          replace(
+              "README.md",
+              "- Commit 前重新校验真实目标路径，降低 staging 到 commit 之间的 symlink TOCTOU 风险；",
+              "- file/directory transaction 在整个事务生命周期持有同一个 `os.Root`；最终 backup/install/delete/rollback 都通过 descriptor-relative `Root.Rename` / `Root.Remove*` / `Root.MkdirAll` 完成，不使用“检查路径后再按字符串路径 rename”的 publication；",
+          )
+          replace(
+              "README.md",
+              "根 module：\n\n```bash\ngo test ./...\ngo test -race ./...\ngo vet ./...\ngit diff --check\n```",
+              "根 module：\n\n```bash\ngo mod tidy -diff\ngo test ./...\ngo test -race ./...\ngo vet ./...\ngit diff --check\n```",
+          )
+          replace(
+              "README.md",
+              "`gx`：\n\n```bash\ncd gx\ngo test ./...\ngo test -race ./...\ngo vet ./...\n```",
+              "`gx`：\n\n```bash\ncd gx\ngo mod tidy -diff\ngo test ./...\ngo test -race ./...\ngo vet ./...\n```",
+          )
+          replace(
+              "README.md",
+              "for module in examples/basic examples/demo examples/quick-demo benchmarks/gx; do\n  (cd \"$module\" && go test ./... && go vet ./...)\ndone",
+              "for module in contrib/gormlog contrib/redislog examples/basic examples/demo examples/quick-demo benchmarks/gx; do\n  (cd \"$module\" && go mod tidy -diff && go test ./... && go vet ./...)\ndone",
+          )
+          replace(
+              "README.md",
+              "CI 使用同一矩阵。并发、生命周期、动态 CORS、Scheduler snapshot/reconcile、Session snapshot 和 gx 文件事务都有回归测试。",
+              "CI 使用同一矩阵，并额外在 macOS/Windows 验证 core + gx portability；稳定 v1 发布后还会执行 public API compatibility gate。并发、生命周期、动态 CORS、Scheduler snapshot/reconcile、Session snapshot 和 gx 文件事务都有回归测试。",
+          )
+
+          replace(
+              "AGENTS.md",
+              "数据库、缓存、消息队列属于业务基础设施，不进入 core。可选集成放 `contrib/`；`gx/` 是独立代码生成 module。",
+              "数据库、缓存、消息队列属于业务基础设施，不进入 core。`contrib/gormlog` 与 `contrib/redislog` 分别是独立 Go module，不能把 GORM/Redis 依赖重新带回 root module；`gx/` 是独立代码生成 module。",
+          )
+          replace(
+              "AGENTS.md",
+              "| `contrib/` | 可选第三方适配，不反向污染 core |",
+              "| `contrib/` | 独立 Go module 的可选第三方适配，不反向污染 core module graph |",
+          )
+          replace(
+              "AGENTS.md",
+              "7. 根 module、gx module 和独立 modules 完成验证；\n8. `git diff --check` 通过；",
+              "7. 根 module、gx module、contrib modules 和其它独立 modules 完成 `go mod tidy -diff`、test/vet；并发敏感的 root/gx 还必须通过 `-race`；\n8. `git diff --check` 通过；",
+          )
+          replace(
+              "AGENTS.md",
+              "- address、trusted proxies、route topology 等启动相关修改必须和启动序列化；",
+              "- address、trusted proxies、route topology 等启动相关修改必须和启动序列化；\n- 任何会修改 Gin topology 的入口（包括 Static/StaticFile/StaticFS）必须先持有 `registrationMu`，并在同一临界区检查 running；禁止 check-then-lock；",
+          )
+          replace(
+              "AGENTS.md",
+              "- Commit 前重新 `safeProjectPath` 校验目标，防止 staging 后 parent 被替换成 symlink；\n- 出错 rollback backup。",
+              "- Transaction 从创建到 Commit/Rollback 持有同一个 `os.Root`；最终 publication/backup/delete/rollback 必须使用 descriptor-relative `Root.Rename` / `Root.Remove*` / `Root.MkdirAll`；\n- 禁止恢复“先 `safeProjectPath` 校验，再用 process-visible 字符串路径 `os.Rename`”的 TOCTOU publication；\n- 每个成功创建的 Transaction 必须在所有路径 Commit 或 Rollback，确保 Windows 等平台及时释放 root handle；\n- 出错 rollback backup。",
+          )
+          replace(
+              "AGENTS.md",
+              "- stage 必须是 absolute、existing、non-symlink directory；",
+              "- stage 必须是 project root 内的 absolute、existing、non-symlink directory，并转换成同一 `os.Root` 下的 relative path；",
+          )
+          replace(
+              "AGENTS.md",
+              "### Core\n\n```bash\ngo test ./...\ngo test -race ./...\ngo vet ./...\ngit diff --check\n```",
+              "### Core\n\n```bash\ngo mod tidy -diff\ngo test ./...\ngo test -race ./...\ngo vet ./...\ngit diff --check\n```",
+          )
+          replace(
+              "AGENTS.md",
+              "### gx\n\n```bash\ncd gx\ngo test ./...\ngo test -race ./...\ngo vet ./...\n```",
+              "### gx\n\n```bash\ncd gx\ngo mod tidy -diff\ngo test ./...\ngo test -race ./...\ngo vet ./...\n```",
+          )
+          replace(
+              "AGENTS.md",
+              "for module in examples/basic examples/demo examples/quick-demo benchmarks/gx; do\n  (cd \"$module\" && go test ./... && go vet ./...)\ndone",
+              "for module in contrib/gormlog contrib/redislog examples/basic examples/demo examples/quick-demo benchmarks/gx; do\n  (cd \"$module\" && go mod tidy -diff && go test ./... && go vet ./...)\ndone",
+          )
+          replace(
+              "AGENTS.md",
+              "- gx commit 前是否重新校验真实路径？\n- root/gx/modules 的 test、race、vet 是否全部通过？",
+              "- gx publication 是否始终绑定 retained `os.Root`，且每个 transaction 都在所有路径关闭？\n- root/gx/modules 的 tidy、test、race、vet 与 macOS/Windows portability 是否全部通过？",
+          )
+          PY
+      - name: Commit docs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md AGENTS.md
+          git commit -m "docs: document final hardening contracts"
+          git push origin HEAD:hardening-final-20260828
