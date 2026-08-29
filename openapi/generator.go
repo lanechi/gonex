@@ -7,12 +7,25 @@ import (
 	"github.com/lanechi/gonex/router"
 )
 
-// Generate builds an OpenAPI 3 document from route metadata.
-func Generate(name string, routes []router.RouteMetadata) Document {
-	document := Document{OpenAPI: "3.0.3", Info: Info{Title: name, Version: "0.1.0"}, Paths: map[string]map[string]Operation{}, Components: map[string]any{"schemas": map[string]any{}, "securitySchemes": map[string]any{}}}
+// Generate builds an OpenAPI 3 document from route metadata and explicit API
+// identity. The caller owns title/version selection; the documentation package
+// does not embed a framework release number into application contracts.
+func Generate(info Info, routes []router.RouteMetadata) Document {
+	if strings.TrimSpace(info.Title) == "" {
+		info.Title = "API"
+	}
+	if strings.TrimSpace(info.Version) == "" {
+		info.Version = "unversioned"
+	}
+	document := Document{OpenAPI: "3.0.3", Info: info, Paths: map[string]map[string]Operation{}, Components: map[string]any{"schemas": map[string]any{}, "securitySchemes": map[string]any{}}}
 	for _, route := range routes {
 		metadata := route
-		op := Operation{Tags: metadata.Tags, Summary: metadata.Summary, Description: metadata.Description, OperationID: metadata.OperationID, Deprecated: metadata.Deprecated, Security: securityRequirements(metadata.Security), Parameters: parametersForRoute(route), Responses: map[string]any{"200": responseSchema(metadata.ResponseType, metadata.Produces), "400": map[string]any{"description": "Bad Request"}, "500": map[string]any{"description": "Internal Server Error"}}}
+		op := Operation{Tags: metadata.Tags, Summary: metadata.Summary, Description: metadata.Description, OperationID: metadata.OperationID, Deprecated: metadata.Deprecated, Security: securityRequirements(metadata.Security), Parameters: parametersForRoute(route), Responses: map[string]any{
+			"200":     responseSchema(metadata.ResponseType, metadata.Produces),
+			"400":     map[string]any{"description": "Bad Request"},
+			"500":     map[string]any{"description": "Internal Server Error"},
+			"default": map[string]any{"description": "Application-defined error response"},
+		}}
 		op.RequestBody = requestBodyForRoute(route)
 		path := Path(metadata.Path)
 		method := strings.ToLower(metadata.Method)
