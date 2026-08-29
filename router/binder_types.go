@@ -30,7 +30,8 @@ func (err *BindingError) Unwrap() error {
 	return err.Cause
 }
 
-// FieldBinding is the precompiled binding metadata for one request field.
+// FieldBinding is immutable request binding metadata used by route inspection
+// and documentation. Runtime Binder state remains private to the router package.
 type FieldBinding struct {
 	Index      []int
 	Path       string
@@ -46,7 +47,7 @@ type FieldBinding struct {
 // Binder executes the request binding plan compiled during route
 // registration. It is safe to reuse for requests of the same type.
 type Binder struct {
-	Fields             []FieldBinding
+	fields             []FieldBinding
 	MaxMultipartMemory int64
 	hasQuery           bool
 	hasBindingRules    bool
