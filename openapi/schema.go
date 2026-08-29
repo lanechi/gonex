@@ -1,6 +1,8 @@
 package openapi
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"mime/multipart"
 	"reflect"
@@ -230,10 +232,20 @@ func addSchemaComponents(c map[string]any, t reflect.Type) {
 		schemas = map[string]any{}
 		c["schemas"] = schemas
 	}
-	if _, ok := schemas[t.Name()]; !ok {
-		schemas[t.Name()] = schemaForType(t)
+	schema := schemaForType(t)
+	if existing, ok := schemas[t.Name()]; !ok {
+		schemas[t.Name()] = schema
+	} else if !reflect.DeepEqual(existing, schema) {
+		schemas[schemaComponentCollisionKey(t)] = schema
 	}
 }
+
+func schemaComponentCollisionKey(t reflect.Type) string {
+	t = indirectType(t)
+	sum := sha256.Sum256([]byte(t.PkgPath()))
+	return t.Name() + "_" + hex.EncodeToString(sum[:6])
+}
+
 func fieldIsRequired(f reflect.StructField) bool {
 	for _, tag := range []string{"binding", "validate"} {
 		for _, o := range strings.Split(f.Tag.Get(tag), ",") {
