@@ -328,6 +328,7 @@ func WithShutdownTimeout(timeout time.Duration) Option {
 			server.shutdownTimeout = timeout
 			server.options.ShutdownTimeout = optional[time.Duration]{Value: timeout, Set: true}
 		}
+	}
 }
 
 // WithTLS enables TLS when Run is used.
