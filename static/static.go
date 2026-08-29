@@ -79,6 +79,10 @@ func Mount(engine *gin.Engine, relative, root string, options Options) error {
 			context.Status(http.StatusNotFound)
 			return
 		}
+		if rootPathHasSymlink(rootHandle, requestedPath) {
+			context.Status(http.StatusNotFound)
+			return
+		}
 		file, candidate, info, ok := localFile(rootHandle, requestedPath, index)
 		if !ok || !allowedFile(candidate, allowed) {
 			if file != nil {
@@ -322,7 +326,7 @@ func localFile(root *os.Root, requestedPath, index string) (*os.File, string, fs
 	if info.IsDir() {
 		_ = file.Close()
 		candidate = path.Join(candidate, index)
-		if !validFilePath(candidate) {
+		if !validFilePath(candidate) || rootPathHasSymlink(root, candidate) {
 			return nil, "", nil, false
 		}
 		file, err = root.Open(filepath.FromSlash(candidate))
@@ -338,6 +342,31 @@ func localFile(root *os.Root, requestedPath, index string) (*os.File, string, fs
 	return file, candidate, info, true
 }
 
+func rootPathHasSymlink(root *os.Root, requestedPath string) bool {
+	if root == nil || !validFilePath(requestedPath) {
+		return true
+	}
+	parts := strings.Split(filepath.FromSlash(requestedPath), string(filepath.Separator))
+	current := ""
+	for index, part := range parts {
+		current = filepath.Join(current, part)
+		info, err := root.Lstat(current)
+		if os.IsNotExist(err) {
+			return false
+		}
+		if err != nil {
+			return true
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return true
+		}
+		if index < len(parts)-1 && !info.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
 // localPathEscapes is retained as an internal regression helper. os.Root does
 // the actual production enforcement and rejects both final and parent symlink
 // escapes at open time.
@@ -347,6 +376,9 @@ func localPathEscapes(root, requestedPath string) bool {
 		return true
 	}
 	defer rootHandle.Close()
+	if rootPathHasSymlink(rootHandle, requestedPath) {
+		return true
+	}
 	file, err := rootHandle.Open(filepath.FromSlash(requestedPath))
 	if err != nil {
 		return true
@@ -395,6 +427,21 @@ func serveFallback(context *gin.Context, root *os.Root, index string, allowed ma
 		context.Status(http.StatusNotFound)
 		return
 	}
+	// SPA routing applies to extensionless application routes, not failed static
+	// asset lookups. This also prevents a rejected unsafe asset path from being
+	// masked by a successful index fallback.
+	if path.Ext(context.Request.URL.Path) != "" {
+		context.Status(http.StatusNotFound)
+		return
+	}
+	requested := strings.TrimPrefix(context.Param("filepath"), "/")
+	if requested == "" {
+		requested = strings.TrimPrefix(context.Request.URL.EscapedPath(), "/")
+	}
+	if requested, ok := safeFilePath(requested); ok && rootPathHasSymlink(root, requested) {
+		context.Status(http.StatusNotFound)
+		return
+	}
 	file, candidate, info, ok := localFile(root, index, index)
 	if !ok || !allowedFile(candidate, allowed) {
 		if file != nil {
@@ -415,7 +462,7 @@ func serveLocalFile(context *gin.Context, file *os.File, info fs.FileInfo, name,
 }
 
 func serveFSFallback(context *gin.Context, filesystem fs.FS, index string, allowed map[string]struct{}, enabled bool, cacheControl string, fileServer http.Handler) {
-	if !enabled || !allowedFile(index, allowed) {
+	if !enabled || !allowedFile(index, allowed) || path.Ext(context.Request.URL.Path) != "" {
 		context.Status(http.StatusNotFound)
 		return
 	}
