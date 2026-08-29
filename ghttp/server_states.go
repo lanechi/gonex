@@ -47,6 +47,11 @@ type securityState struct {
 	csrfHandler          gin.HandlerFunc
 }
 
+type serverShutdownAttempt struct {
+	done chan struct{}
+	err  error
+}
+
 // runtimeState owns lifecycle, listener, and construction status.
 type runtimeState struct {
 	restartManager    RestartManager
@@ -60,4 +65,6 @@ type runtimeState struct {
 	stateMu           sync.RWMutex
 	running           bool
 	staticRootReady   bool
+	shutdownMu        sync.Mutex
+	shutdownAttempt   *serverShutdownAttempt
 }

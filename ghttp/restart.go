@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/lanechi/gonex/logging"
 )
 
 var ErrGracefulRestartUnsupported = errors.New("graceful restart requires a platform restart manager")
@@ -19,6 +21,8 @@ var ErrServerNotRunning = errors.New("server is not running")
 var ErrServerRunning = errors.New("server is already running")
 
 var ErrRestartInProgress = errors.New("server restart is already in progress")
+
+var ErrRestartHandedOff = errors.New("server restart handoff already completed")
 
 // RestartManager is the platform boundary for zero-downtime process restart.
 // Implementations may coordinate listener FD inheritance and readiness with a
@@ -33,15 +37,18 @@ type restartAttempt struct {
 }
 
 type serverRestartManager struct {
-	server  *Server
-	mu      sync.Mutex
-	running bool
-	attempt *restartAttempt
+	server    *Server
+	mu        sync.Mutex
+	running   bool
+	handedOff bool
+	attempt   *restartAttempt
 }
 
 // Restart serializes process handoff. Concurrent or reentrant restart requests
 // return ErrRestartInProgress instead of waiting, which prevents shutdown hooks
-// from deadlocking if they accidentally request another restart.
+// from deadlocking if they accidentally request another restart. Once a child
+// has reported ready, that ownership handoff is terminal for the parent and
+// further restart attempts return ErrRestartHandedOff.
 func (manager *serverRestartManager) Restart(ctx context.Context) error {
 	if manager == nil || manager.server == nil {
 		return ErrGracefulRestartUnsupported
@@ -53,6 +60,10 @@ func (manager *serverRestartManager) Restart(ctx context.Context) error {
 		return err
 	}
 	manager.mu.Lock()
+	if manager.handedOff {
+		manager.mu.Unlock()
+		return ErrRestartHandedOff
+	}
 	if manager.running {
 		manager.mu.Unlock()
 		return ErrRestartInProgress
@@ -168,12 +179,39 @@ func (manager *serverRestartManager) restart(ctx context.Context) error {
 	// already closed the parent's listener. The caller context no longer owns
 	// this irreversible handoff either: cancellation after ready must not leave
 	// both parent and child serving indefinitely, so cleanup switches to its own
-	// bounded background context.
+	// bounded background context. Mark the parent terminal before returning so a
+	// second restart cannot spawn another replacement during cleanup.
+	manager.mu.Lock()
+	manager.handedOff = true
+	manager.mu.Unlock()
+	go func() { _, _ = process.Wait() }()
+	if restartCalledFromServerRequest(ctx, manager.server) {
+		// A request handler cannot synchronously wait for Server.Shutdown: the
+		// HTTP server would in turn wait for that same handler to return. Start
+		// cleanup independently and let the request complete the handoff.
+		go manager.shutdownParentAfterHandoff()
+		return nil
+	}
 	shutdownContext, cancel := restartHandoffCleanupContext(manager.server.shutdownTimeout)
 	defer cancel()
-	shutdownErr := manager.server.Shutdown(shutdownContext)
-	go func() { _, _ = process.Wait() }()
-	return shutdownErr
+	return manager.server.Shutdown(shutdownContext)
+}
+
+func restartCalledFromServerRequest(ctx context.Context, server *Server) bool {
+	frameworkContext := FromContext(ctx)
+	return frameworkContext != nil && frameworkContext.server == server
+}
+
+func (manager *serverRestartManager) shutdownParentAfterHandoff() {
+	shutdownContext, cancel := restartHandoffCleanupContext(manager.server.shutdownTimeout)
+	defer cancel()
+	if err := manager.server.Shutdown(shutdownContext); err != nil {
+		manager.server.logger.Named("server").Error(
+			context.Background(),
+			"restart parent cleanup failed",
+			logging.Error(err),
+		)
+	}
 }
 
 func restartHandoffCleanupContext(timeout time.Duration) (context.Context, context.CancelFunc) {

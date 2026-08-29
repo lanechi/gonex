@@ -3,7 +3,14 @@ package middleware
 
 import (
 	"net/http"
+
+	"github.com/gin-gonic/gin"
 )
+
+// FailureHandler converts a middleware failure into an HTTP response. Built-in
+// middleware falls back to its standard JSON envelope when no handler is
+// supplied, preserving standalone middleware behavior outside ghttp.Server.
+type FailureHandler func(context *gin.Context, status, code int, message string)
 
 // CORSOptions controls cross-origin requests.
 type CORSOptions struct {

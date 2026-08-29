@@ -197,6 +197,9 @@ func (server *Server) MustBind(controller any) {
 }
 
 // Engine exposes the underlying Gin engine for controlled integrations.
+// Mutate it only during application initialization, before Run, RunContext, or
+// Listen. Routes registered directly on Gin are intentionally outside Gonex's
+// registry and OpenAPI contract.
 func (server *Server) Engine() *gin.Engine {
 	return server.engine
 }
@@ -219,6 +222,8 @@ func (server *Server) Address() string {
 }
 
 // HTTPServer returns the underlying net/http server for advanced integrations.
+// Mutate it only during application initialization, before the Server starts;
+// runtime changes bypass Gonex's lifecycle and synchronization guarantees.
 func (server *Server) HTTPServer() *http.Server {
 	return server.httpServer
 }
@@ -300,7 +305,7 @@ func (server *Server) EnableCSRF(options CSRFOptions) error {
 	if options.Enabled {
 		copy := options
 		server.csrfOptions = &copy
-		server.csrfHandler = middleware.CSRF(toMiddlewareCSRFOptions(copy))
+		server.csrfHandler = middleware.CSRF(toMiddlewareCSRFOptions(copy), frameworkFailureHandler(server))
 	} else {
 		server.csrfOptions = nil
 		server.csrfHandler = nil
@@ -318,7 +323,7 @@ func (server *Server) configureCSRFHandler() error {
 	if err := validateCSRFOptions(*server.csrfOptions); err != nil {
 		return err
 	}
-	server.csrfHandler = middleware.CSRF(toMiddlewareCSRFOptions(*server.csrfOptions))
+	server.csrfHandler = middleware.CSRF(toMiddlewareCSRFOptions(*server.csrfOptions), frameworkFailureHandler(server))
 	return nil
 }
 
@@ -469,11 +474,10 @@ func (server *Server) logListening(tlsEnabled bool) {
 	)
 }
 
-// Shutdown gracefully stops the HTTP server. All independent cleanup failures
-// are preserved so callers can diagnose partial shutdown instead of receiving
-// only the first error. A lifecycle transition that is already active returns
-// immediately; proceeding with HTTP/template/logger cleanup in that case could
-// race the phase that still owns those resources.
+// Shutdown gracefully stops the HTTP server. Lifecycle hooks keep their
+// re-entry protection; once those hooks finish, concurrent callers coalesce on
+// one resource-cleanup attempt so HTTP, templates, scheduler, tasks, and logger
+// are not closed concurrently.
 func (server *Server) Shutdown(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -482,6 +486,43 @@ func (server *Server) Shutdown(ctx context.Context) error {
 	if errors.Is(lifecycleErr, lifecycle.ErrPhaseInProgress) {
 		return lifecycleErr
 	}
+	attempt, leader := server.beginShutdownCleanupAttempt()
+	if !leader {
+		select {
+		case <-attempt.done:
+			return attempt.err
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
+	err := server.shutdownResources(ctx, lifecycleErr)
+	server.finishShutdownCleanupAttempt(attempt, err)
+	return err
+}
+
+func (server *Server) beginShutdownCleanupAttempt() (*serverShutdownAttempt, bool) {
+	server.shutdownMu.Lock()
+	defer server.shutdownMu.Unlock()
+	if server.shutdownAttempt != nil {
+		return server.shutdownAttempt, false
+	}
+	attempt := &serverShutdownAttempt{done: make(chan struct{})}
+	server.shutdownAttempt = attempt
+	return attempt, true
+}
+
+func (server *Server) finishShutdownCleanupAttempt(attempt *serverShutdownAttempt, err error) {
+	server.shutdownMu.Lock()
+	attempt.err = err
+	close(attempt.done)
+	if server.shutdownAttempt == attempt {
+		server.shutdownAttempt = nil
+	}
+	server.shutdownMu.Unlock()
+}
+
+func (server *Server) shutdownResources(ctx context.Context, lifecycleErr error) error {
 	httpErr := server.httpServer.Shutdown(ctx)
 	if errors.Is(httpErr, http.ErrServerClosed) {
 		httpErr = nil
