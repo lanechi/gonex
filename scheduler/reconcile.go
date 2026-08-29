@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 )
 
 type preparedDefinition struct {
@@ -14,8 +13,6 @@ type preparedDefinition struct {
 	job        Job
 }
 
-type schedulerReplacer interface{ replace(Job) error }
-type schedulerValidator interface{ validate(Job) error }
 type undoOperation func() error
 
 // Sync validates the complete desired state before mutating the runtime
@@ -24,8 +21,14 @@ func (loader *Loader) Sync(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	definitions, err := loader.store.List(ctx)
 	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	prepared, err := loader.prepareDefinitions(definitions)
@@ -35,6 +38,9 @@ func (loader *Loader) Sync(ctx context.Context) error {
 
 	loader.mu.Lock()
 	defer loader.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	previous := cloneLoadedJobs(loader.loaded)
 	undos := make([]undoOperation, 0)
@@ -49,23 +55,32 @@ func (loader *Loader) Sync(ctx context.Context) error {
 		return errors.Join(append([]error{cause}, rollbackErrors...)...)
 	}
 
+	// Same-ID/same-name version updates can use the scheduler's atomic Replace
+	// path and preserve the overlap gate across generations.
 	for id, old := range previous {
+		if err := ctx.Err(); err != nil {
+			return rollback(err)
+		}
 		current, exists := prepared[id]
 		if !exists || old.Name != current.definition.Name || old.Version == current.definition.Version {
 			continue
 		}
 		oldJob, oldErr := loader.runtimeJob(old.Definition)
 		if oldErr != nil {
-			return oldErr
+			return rollback(oldErr)
 		}
-		undo, replaceErr := replaceRuntimeJob(loader.scheduler, oldJob, current.job)
-		if replaceErr != nil {
-			return rollback(replaceErr)
+		if err := loader.scheduler.Replace(current.job); err != nil {
+			return rollback(err)
 		}
-		undos = append(undos, undo)
+		undos = append(undos, func() error { return loader.scheduler.Replace(oldJob) })
 	}
 
+	// Remove stale or renamed jobs before additions so a new definition may
+	// safely reuse a released runtime name.
 	for id, old := range previous {
+		if err := ctx.Err(); err != nil {
+			return rollback(err)
+		}
 		current, exists := prepared[id]
 		if exists && old.Name == current.definition.Name {
 			continue
@@ -81,6 +96,9 @@ func (loader *Loader) Sync(ctx context.Context) error {
 	}
 
 	for id, current := range prepared {
+		if err := ctx.Err(); err != nil {
+			return rollback(err)
+		}
 		old, exists := previous[id]
 		if exists && old.Name == current.definition.Name {
 			continue
@@ -138,11 +156,7 @@ func (loader *Loader) prepareDefinitions(definitions []JobDefinition) (map[strin
 			return nil, fmt.Errorf("persistent handler %q is not registered", definition.Handler)
 		}
 		job := loader.jobFor(definition, handler)
-		if validator, ok := loader.scheduler.(schedulerValidator); ok {
-			if err := validator.validate(job); err != nil {
-				return nil, fmt.Errorf("persistent job %q: %w", definition.Name, err)
-			}
-		} else if err := validateJob(job, time.Local); err != nil {
+		if err := loader.scheduler.Validate(job); err != nil {
 			return nil, fmt.Errorf("persistent job %q: %w", definition.Name, err)
 		}
 		prepared[definition.ID] = preparedDefinition{definition: definition, handler: handler, job: job}
@@ -163,24 +177,6 @@ func (loader *Loader) runtimeJob(definition JobDefinition) (Job, error) {
 		return Job{}, fmt.Errorf("persistent handler %q is not registered", definition.Handler)
 	}
 	return loader.jobFor(definition, handler), nil
-}
-
-func replaceRuntimeJob(runtime Scheduler, oldJob, newJob Job) (undoOperation, error) {
-	if replacer, ok := runtime.(schedulerReplacer); ok {
-		if err := replacer.replace(newJob); err != nil {
-			return nil, err
-		}
-		return func() error { return replacer.replace(oldJob) }, nil
-	}
-	if err := removePersistentJob(runtime, oldJob.Name); err != nil {
-		return nil, err
-	}
-	if err := runtime.Add(newJob); err != nil {
-		return nil, errors.Join(err, runtime.Add(oldJob))
-	}
-	return func() error {
-		return errors.Join(removePersistentJob(runtime, newJob.Name), runtime.Add(oldJob))
-	}, nil
 }
 
 func removePersistentJob(runtime Scheduler, name string) error {
