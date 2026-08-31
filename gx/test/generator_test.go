@@ -183,6 +183,54 @@ func Ping(context.Context) error { return nil }
 	}
 }
 
+func TestServiceGeneratorPreservesAliasedImports(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.26.0\n")
+	writeFile(t, filepath.Join(root, "internal/logic/order/order.go"), `package order
+
+import (
+	"context"
+	dto "example.com/contracts/models"
+)
+
+type sOrder struct{}
+type sRefund struct{}
+
+func (*sOrder) Create(context.Context, dto.CreateRequest) error { return nil }
+func (*sRefund) Apply(context.Context, dto.CreateRequest) error { return nil }
+`)
+	project, err := gen.DiscoverProject(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gen.GenerateServices(project, gen.ServiceOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	service, err := os.ReadFile(filepath.Join(root, "internal/service/order.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(service)
+	if !strings.Contains(content, `dto "example.com/contracts/models"`) {
+		t.Fatalf("aliased import was not preserved: %s", content)
+	}
+	if !strings.Contains(content, "dto.CreateRequest") {
+		t.Fatalf("aliased type was not preserved: %s", content)
+	}
+	for _, expected := range []string{
+		"type IOrder interface",
+		"func Order() IOrder",
+		"func RegisterOrder(implementation IOrder)",
+		"type IRefund interface",
+		"func Refund() IRefund",
+		"func RegisterRefund(implementation IRefund)",
+	} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("receiver-specific service was not generated (%q): %s", expected, content)
+		}
+	}
+}
+
 func TestGeneratorsPreserveDeveloperImplementationAndSupportDryRun(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.26.0\n")

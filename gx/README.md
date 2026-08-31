@@ -162,7 +162,9 @@ gx service --dry-run
 `internal/logic/logic.go` 中的 blank import，以触发 Logic 注册。已不存在 Logic 模块的 gx 受管
 import 会被删除，用户添加的其它 import 和代码保持不变。
 
-所有业务实现保留在 Logic 包。Controller 依赖 Service 接口，不直接依赖具体 Logic 类型。
+所有业务实现保留在 Logic 包。一个 Logic 模块只有一个 receiver 时，生成模块级 Service；同一模块包含多个 receiver 时，按 receiver 分别生成 Service。惯用的
+`sUser`、`sOrder` receiver 会生成 `IUser`、`IOrder` 及对应的 getter 和 `Register` 函数。Controller 依赖 Service 接口，不直接依赖具体 Logic 类型。
+Logic 方法签名中的显式 import alias 会原样保留在生成的 Service 中。
 命名模式首次创建的 Logic 不带 `DO NOT EDIT`，由开发者替换占位模型并实现业务；后续使用
 `gx service --module <module>` 从真实导出方法重生成 Service。
 

@@ -331,13 +331,32 @@ func parseLogicFile(path string) ([]LogicMethod, error) {
 		if len(function.Recv.List) != 1 {
 			return nil, fmt.Errorf("logic method %s in %s has an unsupported receiver", function.Name.Name, path)
 		}
+		receiver, err := receiverTypeName(function.Recv)
+		if err != nil {
+			return nil, fmt.Errorf("logic method %s in %s: %w", function.Name.Name, path, err)
+		}
 		usedImports := usedSignatureImports(function.Type, imports)
 		methods = append(methods, LogicMethod{
-			Name: function.Name.Name, Doc: commentText(function.Doc),
+			Name: function.Name.Name, Receiver: receiver, Doc: commentText(function.Doc),
 			Signature: functionSignature(function.Type, fileSet), Imports: usedImports,
 		})
 	}
 	return methods, nil
+}
+
+func receiverTypeName(field *ast.FieldList) (string, error) {
+	if field == nil || len(field.List) != 1 {
+		return "", fmt.Errorf("receiver must contain exactly one type")
+	}
+	expression := field.List[0].Type
+	if pointer, ok := expression.(*ast.StarExpr); ok {
+		expression = pointer.X
+	}
+	identifier, ok := expression.(*ast.Ident)
+	if !ok || identifier.Name == "" {
+		return "", fmt.Errorf("receiver type must be a named local type")
+	}
+	return identifier.Name, nil
 }
 
 func renderService(project Project, destination, module string, methods []LogicMethod) ([]byte, error) {
@@ -362,67 +381,86 @@ func renderService(project Project, destination, module string, methods []LogicM
 		sort.Strings(paths)
 		builder.WriteString("import (\n")
 		for _, path := range paths {
-			fmt.Fprintf(&builder, "\t%q\n", imports[path].Path)
+			imported := imports[path]
+			if imported.Name == filepath.Base(imported.Path) {
+				fmt.Fprintf(&builder, "\t%q\n", imported.Path)
+				continue
+			}
+			fmt.Fprintf(&builder, "\t%s %q\n", imported.Name, imported.Path)
 		}
 		builder.WriteString(")\n\n")
 	}
-	builder.WriteString("type I")
-	builder.WriteString(exportedIdentifier(module))
-	builder.WriteString(" interface {\n")
+	groups, err := groupLogicMethods(module, methods)
+	if err != nil {
+		return nil, err
+	}
+	for _, group := range groups {
+		writeServiceContract(&builder, group, serviceImportPath)
+	}
+	return []byte(builder.String()), nil
+}
+
+type logicServiceGroup struct {
+	Name    string
+	Methods []LogicMethod
+}
+
+func groupLogicMethods(module string, methods []LogicMethod) ([]logicServiceGroup, error) {
+	if len(methods) == 0 {
+		return []logicServiceGroup{{Name: exportedIdentifier(module)}}, nil
+	}
+	byReceiver := make(map[string][]LogicMethod)
 	for _, method := range methods {
+		byReceiver[method.Receiver] = append(byReceiver[method.Receiver], method)
+	}
+	if len(byReceiver) == 0 {
+		return nil, fmt.Errorf("logic module %s has no receiver methods", module)
+	}
+	groups := make([]logicServiceGroup, 0, len(byReceiver))
+	usedNames := make(map[string]string, len(byReceiver))
+	for receiver, receiverMethods := range byReceiver {
+		name := exportedIdentifier(module)
+		if len(byReceiver) > 1 {
+			name = receiverServiceName(receiver)
+		}
+		if previous, exists := usedNames[name]; exists {
+			return nil, fmt.Errorf("logic receivers %q and %q produce the same service name %q", previous, receiver, name)
+		}
+		usedNames[name] = receiver
+		groups = append(groups, logicServiceGroup{Name: name, Methods: receiverMethods})
+	}
+	sort.Slice(groups, func(i, j int) bool { return groups[i].Name < groups[j].Name })
+	return groups, nil
+}
+
+func receiverServiceName(receiver string) string {
+	if strings.HasPrefix(receiver, "s") && len(receiver) > 1 && receiver[1] >= 'A' && receiver[1] <= 'Z' {
+		receiver = receiver[1:]
+	}
+	return exportedIdentifier(receiver)
+}
+
+func writeServiceContract(builder *strings.Builder, group logicServiceGroup, serviceImportPath string) {
+	fmt.Fprintf(builder, "type I%s interface {\n", group.Name)
+	for _, method := range group.Methods {
 		if method.Doc != "" {
 			for _, line := range strings.Split(method.Doc, "\n") {
-				builder.WriteString("\t// ")
-				builder.WriteString(strings.TrimSpace(line))
-				builder.WriteByte('\n')
+				fmt.Fprintf(builder, "\t// %s\n", strings.TrimSpace(line))
 			}
 		}
-		builder.WriteString("\t")
-		builder.WriteString(method.Name)
 		signature := strings.TrimPrefix(method.Signature, "func")
 		for _, imported := range method.Imports {
 			if imported.Path == serviceImportPath {
 				signature = strings.ReplaceAll(signature, imported.Name+".", "")
 			}
 		}
-		builder.WriteString(signature)
-		builder.WriteByte('\n')
+		fmt.Fprintf(builder, "\t%s%s\n", method.Name, signature)
 	}
-	builder.WriteString("}\n")
-	builder.WriteString("\nvar local")
-	builder.WriteString(exportedIdentifier(module))
-	builder.WriteString(" I")
-	builder.WriteString(exportedIdentifier(module))
-	builder.WriteString("\n\n")
-	builder.WriteString("// ")
-	builder.WriteString(exportedIdentifier(module))
-	builder.WriteString(" returns the registered ")
-	builder.WriteString(exportedIdentifier(module))
-	builder.WriteString(" service implementation.\n")
-	builder.WriteString("func ")
-	builder.WriteString(exportedIdentifier(module))
-	builder.WriteString("() I")
-	builder.WriteString(exportedIdentifier(module))
-	builder.WriteString(" {\n\tif local")
-	builder.WriteString(exportedIdentifier(module))
-	builder.WriteString(" == nil {\n\t\tpanic(\"gx: ")
-	builder.WriteString(module)
-	builder.WriteString(" service is not registered\")\n\t}\n\treturn local")
-	builder.WriteString(exportedIdentifier(module))
-	builder.WriteString("\n}\n\n")
-	builder.WriteString("// Register")
-	builder.WriteString(exportedIdentifier(module))
-	builder.WriteString(" registers the ")
-	builder.WriteString(exportedIdentifier(module))
-	builder.WriteString(" service implementation.\n")
-	builder.WriteString("func Register")
-	builder.WriteString(exportedIdentifier(module))
-	builder.WriteString("(implementation I")
-	builder.WriteString(exportedIdentifier(module))
-	builder.WriteString(") {\n\tlocal")
-	builder.WriteString(exportedIdentifier(module))
-	builder.WriteString(" = implementation\n}\n")
-	return []byte(builder.String()), nil
+	fmt.Fprintf(builder, "}\n\nvar local%s I%s\n\n", group.Name, group.Name)
+	fmt.Fprintf(builder, "// %s returns the registered %s service implementation.\n", group.Name, group.Name)
+	fmt.Fprintf(builder, "func %s() I%s {\n\tif local%s == nil {\n\t\tpanic(\"gx: %s service is not registered\")\n\t}\n\treturn local%s\n}\n\n", group.Name, group.Name, group.Name, strings.ToLower(group.Name), group.Name)
+	fmt.Fprintf(builder, "// Register%s registers the %s service implementation.\n", group.Name, group.Name)
+	fmt.Fprintf(builder, "func Register%s(implementation I%s) {\n\tlocal%s = implementation\n}\n\n", group.Name, group.Name, group.Name)
 }
 
 func demoModelOutput(project Project) (*shared.Output, error) {
@@ -492,10 +530,16 @@ func importRefs(file *ast.File) (map[string]ImportRef, error) {
 		if spec.Name != nil && (spec.Name.Name == "_" || spec.Name.Name == ".") {
 			continue
 		}
-		if spec.Name != nil {
-			return nil, fmt.Errorf("aliased import %q is not supported; use the package's default name", path)
-		}
 		name := filepath.Base(path)
+		if spec.Name != nil {
+			name = spec.Name.Name
+		}
+		if !validIdentifier(name) {
+			return nil, fmt.Errorf("import %q has invalid local name %q", path, name)
+		}
+		if previous, exists := result[name]; exists && previous.Path != path {
+			return nil, fmt.Errorf("imports %q and %q use the same local name %q", previous.Path, path, name)
+		}
 		result[name] = ImportRef{Name: name, Path: path}
 	}
 	return result, nil

@@ -73,6 +73,7 @@ type API struct {
 
 type LogicMethod struct {
 	Name      string
+	Receiver  string
 	Doc       string
 	Signature string
 	Imports   []ImportRef
