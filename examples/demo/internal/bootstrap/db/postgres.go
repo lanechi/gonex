@@ -1,4 +1,4 @@
-package database
+package db
 
 import (
 	"fmt"
@@ -18,12 +18,15 @@ import (
 )
 
 var (
-	database   *gorm.DB
-	databaseMu sync.RWMutex
+	postgresDB syncPostgresDB
 )
 
-type settings struct {
-	Driver   string
+type syncPostgresDB struct {
+	mu sync.RWMutex
+	db *gorm.DB
+}
+
+type postgresSettings struct {
 	DSN      string
 	URL      string
 	Host     string
@@ -37,15 +40,16 @@ type settings struct {
 	TimeZone string
 }
 
-// Initialize opens the configured GORM database with the framework logger.
-// Database settings are read from DATABASE_* values in .env or the process
-// environment; config.yaml is intentionally not used for database settings.
-func Initialize(configuration config.Config) error {
+// InitializePostgres opens the configured PostgreSQL database with the
+// framework logger. Settings are read from DATABASE_* values in .env or the
+// process environment; config.yaml is intentionally not used for database
+// settings.
+func InitializePostgres(configuration config.Config) error {
 	if configuration == nil {
-		return fmt.Errorf("database configuration is nil")
+		return fmt.Errorf("postgres configuration is nil")
 	}
-	configurationValues := loadSettings(configuration)
-	level := parseLogLevel(configuration.GetString("DATABASE_LOG_LEVEL"))
+	configurationValues := loadPostgresSettings(configuration)
+	level := parsePostgresLogLevel(configuration.GetString("DATABASE_LOG_LEVEL"))
 	slowThreshold := 200 * time.Millisecond
 	if configured := configuration.GetString("DATABASE_LOG_SLOW_THRESHOLD"); configured != "" {
 		parsed, err := time.ParseDuration(configured)
@@ -54,14 +58,14 @@ func Initialize(configuration config.Config) error {
 		}
 		slowThreshold = parsed
 	}
-	dialector, err := dialector(configurationValues)
+	dialector, err := postgresDialector(configurationValues)
 	if err != nil {
 		return err
 	}
-	databaseMu.Lock()
-	defer databaseMu.Unlock()
-	if database != nil {
-		return fmt.Errorf("database is already initialized")
+	postgresDB.mu.Lock()
+	defer postgresDB.mu.Unlock()
+	if postgresDB.db != nil {
+		return fmt.Errorf("postgres database is already initialized")
 	}
 	opened, err := gorm.Open(dialector, &gorm.Config{
 		Logger: gormlog.New(
@@ -71,15 +75,14 @@ func Initialize(configuration config.Config) error {
 		),
 	})
 	if err != nil {
-		return fmt.Errorf("open database: %w", err)
+		return fmt.Errorf("open postgres database: %w", err)
 	}
-	database = opened
+	postgresDB.db = opened
 	return nil
 }
 
-func loadSettings(configuration config.Config) settings {
-	result := settings{
-		Driver:   strings.ToLower(strings.TrimSpace(configuration.GetString("DATABASE_DRIVER"))),
+func loadPostgresSettings(configuration config.Config) postgresSettings {
+	result := postgresSettings{
 		DSN:      strings.TrimSpace(configuration.GetString("DATABASE_DSN")),
 		URL:      strings.TrimSpace(configuration.GetString("DATABASE_URL")),
 		Host:     strings.TrimSpace(configuration.GetString("DATABASE_HOST")),
@@ -92,48 +95,41 @@ func loadSettings(configuration config.Config) settings {
 		SSLMode:  strings.TrimSpace(configuration.GetString("DATABASE_SSLMODE")),
 		TimeZone: strings.TrimSpace(configuration.GetString("DATABASE_TIMEZONE")),
 	}
-	if result.Driver == "" {
-		result.Driver = "postgres"
-	}
 	return result
 }
 
-// DB returns the initialized application database.
-func DB() *gorm.DB {
-	databaseMu.RLock()
-	defer databaseMu.RUnlock()
-	if database == nil {
-		panic("database is not initialized")
+// Postgres returns the initialized PostgreSQL database.
+func Postgres() *gorm.DB {
+	postgresDB.mu.RLock()
+	defer postgresDB.mu.RUnlock()
+	if postgresDB.db == nil {
+		panic("postgres database is not initialized")
 	}
-	return database
+	return postgresDB.db
 }
 
-// Close releases the application's database connection during shutdown.
-func Close() error {
-	databaseMu.Lock()
-	defer databaseMu.Unlock()
-	if database == nil {
+// ClosePostgres releases the PostgreSQL connection during shutdown.
+func ClosePostgres() error {
+	postgresDB.mu.Lock()
+	defer postgresDB.mu.Unlock()
+	if postgresDB.db == nil {
 		return nil
 	}
-	sqlDatabase, err := database.DB()
+	sqlDatabase, err := postgresDB.db.DB()
 	if err != nil {
 		return err
 	}
 	if err := sqlDatabase.Close(); err != nil {
 		return err
 	}
-	database = nil
+	postgresDB.db = nil
 	return nil
 }
 
-func dialector(configuration settings) (gorm.Dialector, error) {
-	driver := strings.ToLower(strings.TrimSpace(configuration.Driver))
+func postgresDialector(configuration postgresSettings) (gorm.Dialector, error) {
 	dsn := strings.TrimSpace(configuration.DSN)
 	if dsn == "" {
 		dsn = strings.TrimSpace(configuration.URL)
-	}
-	if driver != "postgres" && driver != "postgresql" {
-		return nil, fmt.Errorf("unsupported database driver %q", driver)
 	}
 	if dsn == "" {
 		dsn = postgresDSN(configuration)
@@ -144,7 +140,7 @@ func dialector(configuration settings) (gorm.Dialector, error) {
 	return postgres.Open(dsn), nil
 }
 
-func postgresDSN(configuration settings) string {
+func postgresDSN(configuration postgresSettings) string {
 	user := configuration.Username
 	if user == "" {
 		user = configuration.User
@@ -185,7 +181,7 @@ func postgresDSN(configuration settings) string {
 	return connection.String()
 }
 
-func parseLogLevel(value string) logger.LogLevel {
+func parsePostgresLogLevel(value string) logger.LogLevel {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "silent":
 		return logger.Silent

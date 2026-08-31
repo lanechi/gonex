@@ -1,0 +1,4 @@
+interface:
+  display_name: "Gonex Logging"
+  short_description: "Use gonex structured logging"
+  default_prompt: "Use $gonex-use-logging to add structured logging to this gonex component."

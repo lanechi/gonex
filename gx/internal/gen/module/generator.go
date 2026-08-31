@@ -350,8 +350,12 @@ func validateDemo(root string) error {
 		".codex/agents/explorer.toml", ".codex/agents/tester.toml",
 		".agents/skills/gonex-create-resource/SKILL.md", ".agents/skills/gonex-design-api/SKILL.md",
 		".agents/skills/gonex-implement-controller/SKILL.md", ".agents/skills/gonex-implement-service/SKILL.md",
-		".agents/skills/gonex-review-project/SKILL.md", "api/hello/hello.go", "api/hello/v1/hello.go",
-		"internal/database/database.go", "internal/cmd/cmd.go", "internal/cmd/root.go",
+		".agents/skills/gonex-review-project/SKILL.md", ".agents/skills/gonex-use-config/SKILL.md",
+		".agents/skills/gonex-use-logging/SKILL.md", ".agents/skills/gonex-use-template/SKILL.md",
+		".agents/skills/gonex-use-dao/SKILL.md", ".agents/skills/gonex-use-data/SKILL.md",
+		"api/hello/hello.go", "api/hello/v1/hello.go",
+		"internal/bootstrap/db/postgres.go", "internal/bootstrap/db/mysql.go", "internal/bootstrap/db/sqlite.go",
+		"internal/cmd/cmd.go", "internal/cmd/root.go",
 		"internal/controller/hello/hello.go", "internal/controller/hello/hello_new.go",
 		"internal/controller/hello/hello_v1_hello.go", "internal/logic/hello/hello.go", "internal/service/hello.go",
 	} {
@@ -382,7 +386,7 @@ func validateDemo(root string) error {
 	if !ignoresRootEnv(string(gitignoreSource)) {
 		return fmt.Errorf("template .gitignore must ignore the root .env file")
 	}
-	databaseSource, err := os.ReadFile(filepath.Join(root, "internal/database/database.go"))
+	databaseSource, err := os.ReadFile(filepath.Join(root, "internal/bootstrap/db/postgres.go"))
 	if err != nil {
 		return fmt.Errorf("read template database: %w", err)
 	}

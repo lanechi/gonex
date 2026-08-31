@@ -1,0 +1,4 @@
+interface:
+  display_name: "Gonex Config"
+  short_description: "Use gonex config and environment settings"
+  default_prompt: "Use $gonex-use-config to configure this gonex application safely."

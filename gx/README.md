@@ -85,7 +85,8 @@ my-project/
 ├── internal/
 │   ├── cmd/
 │   ├── controller/hello/
-│   ├── database/
+│   ├── bootstrap/
+│   │   └── db/
 │   ├── logic/hello/
 │   └── service/
 ├── resource/
@@ -180,8 +181,9 @@ gx dao --tables public.users,billing.invoices
 ```
 
 `gx dao` 是独立的数据库模型生成命令，支持 SQLite、MySQL/MariaDB/TiDB、PostgreSQL 和 SQL Server；
-这不会向 `gx init` 项目加入相应运行时 driver。规范模板 `examples/demo` 的 `internal/database/database.go` 只使用
-PostgreSQL。最小 PostgreSQL 配置：
+这不会向 `gx init` 项目加入相应运行时 driver。规范模板 `examples/demo` 的
+`internal/bootstrap/db/postgres.go` 当前启用 PostgreSQL；同目录的 `mysql.go` 和 `sqlite.go` 保留为注释模板，
+需要对应驱动时可取消注释。最小 PostgreSQL 配置：
 
 ```dotenv
 DATABASE_DRIVER=postgres

@@ -101,7 +101,8 @@ Logic 的导出 receiver 方法会被 `gx service` 扫描进 Service 接口。�
 - 仅供包内使用的辅助方法必须非导出；
 - 第一个参数使用 `context.Context`；
 - 不依赖 API Req/Res 或 `ghttp.Context`；
-- 通过 `service.Register<Module>(New())` 注册实现。
+- 单 receiver 模块通过 `service.Register<Module>(New())` 注册；多个 receiver 时按 gx 生成的
+  receiver-specific Service 接口和 `Register<Name>` 分别注册实现。
 
 修改 Logic 方法签名后，总是重新生成对应 Service，并修复 Controller 调用处。
 

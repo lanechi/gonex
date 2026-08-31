@@ -45,11 +45,21 @@ func (logic *sUser) normalizeName(name string) string {
 
 ## 3. 注册
 
-无参数构造的常见注册方式：
+单 receiver 模块的常见注册方式：
 
 ```go
 func init() {
 	service.RegisterUser(New())
+}
+```
+
+同一个 Logic 包包含多个 receiver 时，Service 会按 receiver 拆分。例如 `sOrder` 和 `sRefund` 会生成
+`IOrder`、`IRefund` 及对应的 `RegisterOrder`、`RegisterRefund`。每个实现需要分别注册：
+
+```go
+func init() {
+	service.RegisterOrder(NewOrder())
+	service.RegisterRefund(NewRefund())
 }
 ```
 
@@ -70,7 +80,7 @@ import _ "example.com/app/internal/logic"
 
 1. Logic 包是否被聚合文件 blank-import；
 2. 应用入口是否导入聚合包；
-3. `init` 或显式组合根是否调用正确的 `Register<Module>`；
+3. `init` 或显式组合根是否调用了正确 receiver 对应的 `Register<Name>`；
 4. 是否存在循环依赖导致采用了错误包；
 5. 测试是否绕过正常启动入口且没有注册 fake。
 
@@ -92,6 +102,7 @@ gx service --module user
 生成失败的常见原因：
 
 - 同一模块存在重名导出 receiver 方法；
+- 多个 receiver 经过命名规范化后产生相同 Service 名称；
 - Logic 方法签名引用了无法解析或包名冲突的类型；
 - 目标模块目录与 Go package 名不一致；
 - 当前目录向上发现了错误的 `go.mod`；

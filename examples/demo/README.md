@@ -32,7 +32,7 @@ api/                         HTTP Req/Res、g.Meta 和参数校验
 config/                      Web Server 配置
 internal/cmd/                Cobra 命令与应用组合根
 internal/controller/         HTTP 边界和 gx Controller 契约（包文件、构造函数、动作实现）
-internal/database/           PostgreSQL 初始化与关闭
+internal/bootstrap/db/       启动基础设施；postgres.go 启用，mysql.go/sqlite.go 为注释模板
 internal/logic/              业务实现和注册聚合
 internal/service/            gx 生成的 Service 接口
 resource/public/             静态资源
@@ -56,6 +56,12 @@ gx service
 `api/<module>/<module>.go`。API 请求/响应、
 Controller 动作实现和 Logic 由开发者维护。新增完整资源时可调用 `$gonex-create-resource`；参数设计、
 Controller、Service 和审查也有对应项目 skill。
+
+配置、模板和日志也有专用 skill：`$gonex-use-config` 说明 `config.yaml`、`.env`、系统环境变量
+和启动初始化顺序；`$gonex-use-template` 说明 HTML 模板根目录、模板函数和页面渲染；
+`$gonex-use-logging` 说明 Controller、Service、后台任务和基础设施的结构化日志；
+`$gonex-use-dao` 说明 `gx dao` 生成和使用 DAO/Entity；`$gonex-use-data` 说明数据库、Redis 等
+启动基础设施、事务和数据访问分层。
 
 ## 定时任务
 

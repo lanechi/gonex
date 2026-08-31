@@ -1,0 +1,4 @@
+interface:
+  display_name: "Gonex DAO"
+  short_description: "Generate and use gonex GORM DAO"
+  default_prompt: "Use $gonex-use-dao to update or use database DAO and Entity code safely."

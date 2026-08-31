@@ -106,6 +106,14 @@ runtime config.Set > 系统环境变量 > .env > 配置文件 > 默认值
 
 环境变量和配置文件不是通过相同的嵌套结构合并，而是按照配置 key 一一对应。配置路径中的 `.` 会转换成 `_`，并统一转换为大写；驼峰也会拆成下划线。
 
+配置命名建议遵循以下大小写规则：
+
+- `config.yaml` 使用小写或 lowerCamelCase，例如 `server.address`、`server.maxBodyBytes`；
+- `.env` 和系统环境变量使用大写下划线，例如 `SERVER_ADDRESS`、`SERVER_MAX_BODY_BYTES`；
+- 使用 `Unmarshal` 时，结构体字段通过 `mapstructure` 标签声明 YAML key，例如 `` `mapstructure:"maxBodyBytes"` ``；
+- Linux/macOS 的系统环境变量区分大小写，应用会按生成的大写名称查找，不要使用 `server_address` 或 `serverAddress`；
+- 变量值是否区分大小写由具体配置项决定，不能一概而论。
+
 例如 `config.yaml`：
 
 ```yaml

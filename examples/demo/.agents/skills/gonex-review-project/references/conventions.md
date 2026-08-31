@@ -38,6 +38,7 @@
 - Logic 不依赖 API 或 HTTP 类型，公开方法第一参数是 `context.Context`。
 - 仅真正的服务能力导出 receiver 方法，内部 helper 非导出。
 - Service 生成接口与 Logic 当前签名一致；没有手改 `DO NOT EDIT`。
+- 同一 Logic 模块的多个 receiver 已分别生成并注册对应 Service；签名中的 import alias 没有被丢失。
 - Logic 注册、聚合 blank import、应用入口导入形成完整链路。
 - 事务、幂等、资源级授权和状态转换位于 Logic；敏感数据不进入日志。
 - 错误可分类并保留链，Controller 不依赖字符串匹配。

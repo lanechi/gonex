@@ -1,0 +1,4 @@
+interface:
+  display_name: "Gonex Data"
+  short_description: "Organize gonex data infrastructure"
+  default_prompt: "Use $gonex-use-data to design or update gonex database and bootstrap data access."

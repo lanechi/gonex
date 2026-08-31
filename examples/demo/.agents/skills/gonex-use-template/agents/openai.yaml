@@ -1,0 +1,4 @@
+interface:
+  display_name: "Gonex Templates"
+  short_description: "Use gonex HTML templates"
+  default_prompt: "Use $gonex-use-template to add or update a gonex HTML page."

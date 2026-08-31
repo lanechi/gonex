@@ -17,8 +17,9 @@ Controller → generated Service interface → developer Logic → DAO / externa
 - 在 Logic 上实现公开方法，并把 `context.Context` 放在第一参数。
 - Logic 使用领域/应用模型，不依赖 `api/...` 的 Req/Res，不接收 `ghttp.Context`。
 - Service 文件是 Logic 导出方法签名的生成投影；业务实现不写进 Service 生成文件。
-- 每个 Logic 模块通过 `service.Register<Module>(New())` 注册；应用启动入口 blank-import
-  `internal/logic` 聚合包。
+- 一个 Logic 模块只有一个 receiver 时通过 `service.Register<Module>(New())` 注册；同一模块有多个
+  receiver 时，使用 gx 按 receiver 生成的对应 `Register<Name>` 和 Service 接口分别注册。应用启动入口
+  始终 blank-import `internal/logic` 聚合包。
 - 事务、幂等、授权后的业务规则和跨 DAO 编排属于 Logic；HTTP 状态和响应结构属于 Controller。
 
 ## gx 工作流
@@ -37,4 +38,6 @@ gx service --module <module>
 ## 验证
 
 至少覆盖业务成功、领域失败、Context 取消和关键数据边界。运行格式化与目标 module 测试；出现
-`service is not registered` 时，依次检查 Logic 的 `init`、注册函数、聚合 blank import 和启动入口。
+`service is not registered` 时，依次检查 Logic 的 `init`、对应 receiver 的注册函数、聚合 blank import
+和启动入口。`gx service` 会保留方法签名中的显式 import alias；惯用的 `sUser`、`sOrder` receiver 会
+分别生成 `IUser`、`IOrder`。

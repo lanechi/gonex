@@ -23,7 +23,7 @@ func (*ControllerV1) Action(
 如果方法声明了带 `g.Meta` 的请求类型但签名不正确，注册时必须修正错误，不能依赖扫描器静默跳过。
 
 - 接收已绑定、已校验的 `req`；不要重复解析 path/query/JSON。
-- 映射为领域输入，调用 `service.<Module>()`，再映射为公开响应。
+- 映射为领域输入，调用对应的 `service.<Name>()`（单 receiver 通常是模块名），再映射为公开响应。
 - 透传 `context.Context`，不要替换成 `context.Background()`。
 - 预期业务错误转换为带稳定业务码和 HTTP 状态的 `ghttp.Error`；保留 `Cause` 供日志和错误链使用。
 - 普通 JSON 成功响应可以返回 `Res` 或 `*Res`，也可以使用命名 slice、map、标量等 JSON 可编码类型；gx 默认
