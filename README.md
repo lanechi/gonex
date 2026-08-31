@@ -104,6 +104,51 @@ gx:   gx/vX.Y.Z
 runtime config.Set > 系统环境变量 > .env > 配置文件 > 默认值
 ```
 
+环境变量和配置文件不是通过相同的嵌套结构合并，而是按照配置 key 一一对应。配置路径中的 `.` 会转换成 `_`，并统一转换为大写；驼峰也会拆成下划线。
+
+例如 `config.yaml`：
+
+```yaml
+server:
+  address: ":8000"
+  maxBodyBytes: 10485760
+session:
+  storage:
+    type: memory
+```
+
+对应的 `.env` 或系统环境变量是：
+
+```dotenv
+SERVER_ADDRESS=:9000
+SERVER_MAX_BODY_BYTES=20971520
+SESSION_STORAGE_TYPE=cookie
+```
+
+读取时：
+
+```go
+address := g.Cfg().GetString("server.address")
+// address == ":9000"
+```
+
+环境变量只覆盖匹配的具体 key，不会把整个 `server` 或 `session` 对象替换掉。没有对应环境变量的字段继续使用配置文件值。使用 `Unmarshal` 时，目标结构体字段应通过 `mapstructure` 标签声明配置 key：
+
+```go
+var cfg struct {
+  Server struct {
+    Address      string `mapstructure:"address"`
+    MaxBodyBytes int    `mapstructure:"maxBodyBytes"`
+  } `mapstructure:"server"`
+}
+
+if err := g.Cfg().Unmarshal(&cfg); err != nil {
+  // handle error
+}
+```
+
+`g.Cfg()` 会懒加载项目根目录的 `.env` 和默认配置文件。默认配置文件按以下顺序查找，第一个存在的文件生效：`./config.yaml`、`./config/config.yaml`、`./manifest/config/config.yaml`。`gx dao` 是例外：它只读取 `DATABASE_*` 的系统环境变量和 `.env`，不会读取 `config.yaml`。
+
 ## OpenAPI
 
 默认端点：
