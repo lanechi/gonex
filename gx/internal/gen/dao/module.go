@@ -29,7 +29,7 @@ func ensureModelDependencies(project Project, result *Result) error {
 		version string
 	}{
 		{path: "gorm.io/gen", version: "v0.3.28"},
-		{path: "gorm.io/plugin/dbresolver", version: "v1.5.3"},
+		{path: "gorm.io/plugin/dbresolver", version: "v1.6.2"},
 		{path: "github.com/google/uuid", version: "v1.6.0"},
 		{path: "github.com/shopspring/decimal", version: "v1.4.0"},
 		{path: "gorm.io/datatypes", version: "v1.2.4"},

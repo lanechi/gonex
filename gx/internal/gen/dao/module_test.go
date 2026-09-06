@@ -1,0 +1,42 @@
+package dao
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"golang.org/x/mod/modfile"
+)
+
+func TestEnsureModelDependenciesUsesCompatibleDBResolver(t *testing.T) {
+	root := t.TempDir()
+	goModPath := filepath.Join(root, "go.mod")
+	if err := os.WriteFile(goModPath, []byte("module example.com/app\n\ngo 1.26.0\n\nrequire gorm.io/gorm v1.31.2\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	var result Result
+	if err := ensureModelDependencies(Project{Root: root}, &result); err != nil {
+		t.Fatalf("ensure model dependencies: %v", err)
+	}
+
+	content, err := os.ReadFile(goModPath)
+	if err != nil {
+		t.Fatalf("read go.mod: %v", err)
+	}
+	file, err := modfile.Parse(goModPath, content, nil)
+	if err != nil {
+		t.Fatalf("parse go.mod: %v", err)
+	}
+
+	requirements := make(map[string]string, len(file.Require))
+	for _, requirement := range file.Require {
+		requirements[requirement.Mod.Path] = requirement.Mod.Version
+	}
+	if got := requirements["gorm.io/plugin/dbresolver"]; got != "v1.6.2" {
+		t.Fatalf("dbresolver version = %q, want v1.6.2", got)
+	}
+	if got := requirements["gorm.io/gorm"]; got != "v1.31.2" {
+		t.Fatalf("gorm version = %q, want existing v1.31.2 preserved", got)
+	}
+}
