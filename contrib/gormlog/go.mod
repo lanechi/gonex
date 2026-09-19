@@ -13,5 +13,3 @@ require (
 	go.uber.org/zap v1.28.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 )
-
-replace github.com/lanechi/gonex => ../..
