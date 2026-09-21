@@ -17,6 +17,8 @@ description: 设计或修改 gonex API 的 g.Meta、请求来源、校验、响�
 4. 使用 `binding` 表达绑定期必填约束，使用 `validate` 表达范围、长度和格式约束；零值有业务意义
    时使用指针或显式存在性模型。
 5. 让 `Res` 表达公开响应契约，不直接暴露数据库 Entity、DAO 类型或敏感内部字段。
+6. API 独有的 Req/Res 结构体留在 `api/<module>/<version>`；被多个动作或 Controller、Service、Logic
+   共同使用的业务结构体统一放 `internal/model`，不要在多个包复制同形类型。
 
 ## 不变量
 

@@ -1,4 +1,6 @@
 interface:
   display_name: "Gonex Project Review"
   short_description: "Review gonex code structure and synchronization rules"
-  default_prompt: "Use $gonex-review-project to review this gonex change for framework conventions and synchronization gaps."
+  default_prompt: "Use $gonex-review-project to review this change for gonex layering, database boundaries, generated ownership, and synchronization gaps."
+policy:
+  allow_implicit_invocation: true

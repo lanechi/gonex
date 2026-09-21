@@ -1,4 +1,6 @@
 interface:
   display_name: "Gonex Service"
   short_description: "Implement gonex Logic and generated Service contracts"
-  default_prompt: "Use $gonex-implement-service to add this business operation to the gonex service layer."
+  default_prompt: "Use $gonex-implement-service to add this operation in one Logic directory using shared models and the existing DAO or global DB."
+policy:
+  allow_implicit_invocation: true

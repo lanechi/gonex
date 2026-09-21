@@ -40,3 +40,20 @@ func TestEnsureModelDependenciesUsesCompatibleDBResolver(t *testing.T) {
 		t.Fatalf("gorm version = %q, want existing v1.31.2 preserved", got)
 	}
 }
+
+func TestRunGoModTidyIgnoresUnrelatedPackageLoadErrors(t *testing.T) {
+	t.Setenv("GOPROXY", "off")
+	root := t.TempDir()
+	writeDAOTestFile(t, filepath.Join(root, "go.mod"), "module example.com/broken\n\ngo 1.26.0\n")
+	writeDAOTestFile(t, filepath.Join(root, "broken.go"), `package broken
+
+import _ "example.com/broken/missing"
+`)
+
+	if err := runGoModTidy(root); err != nil {
+		t.Fatalf("go mod tidy -e rejected an unrelated package load error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
+		t.Fatalf("go.mod missing after tolerant tidy: %v", err)
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"github.com/lanechi/gonex/examples/demo/internal/bootstrap/db"
 	"github.com/lanechi/gonex/examples/demo/internal/controller/hello"
 	_ "github.com/lanechi/gonex/examples/demo/internal/logic"
+	"github.com/lanechi/gonex/g"
 	"github.com/lanechi/gonex/ghttp"
 	"github.com/spf13/cobra"
 )
@@ -17,7 +18,7 @@ var serveCmd = &cobra.Command{
 		if err := config.Init(); err != nil {
 			return err
 		}
-		if err := db.InitializePostgres(config.Default()); err != nil {
+		if err := db.InitializePostgres(g.Cfg()); err != nil {
 			return err
 		}
 		server := ghttp.NewServer()

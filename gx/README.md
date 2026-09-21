@@ -88,6 +88,7 @@ my-project/
 │   ├── bootstrap/
 │   │   └── db/
 │   ├── logic/hello/
+│   ├── model/
 │   └── service/
 ├── resource/
 ├── .env.example
@@ -100,7 +101,10 @@ pseudo-version 从对应 commit 下载，只有本地 `(devel)` 构建使用 `ma
 的测试或镜像 archive。下载体、解压后总大小、
 单文件和条目数均有限制；绝对路径、`..`、反斜杠、符号链接、硬链接和特殊文件会被拒绝。必要文件、
 根 `.env` 的 `.gitignore` 规则、canonical module、项目名和 PostgreSQL driver 校验通过后，才在 staging 中替换 module/项目名并
-提交目标。失败不会修改已有目标。
+提交目标。`.agents/skills/` 也按完整 bundle 校验：每个 skill 必须有名称一致的 `SKILL.md`、
+`agents/openai.yaml` 和所需 reference，默认提示必须引用对应 `$skill-name`，并显式允许隐式调用。
+新项目的 `AGENTS.md` 会继续按 API、Controller、Logic、DAO、配置等任务路由这些 skills。任何校验失败
+都不会修改已有目标。
 
 Controller、Service 等普通生成写入统一经过 `internal/gen/fs` 的 staging transaction，先校验项目相对路径，
 再提交生成文件；DAO/Entity 继续使用双目录替换事务，以保证两个生成目录成对更新和失败回滚。
@@ -166,6 +170,8 @@ import 会被删除，用户添加的其它 import 和代码保持不变。
 所有业务实现保留在 Logic 包。一个 Logic 模块只有一个 receiver 时，生成模块级 Service；同一模块包含多个 receiver 时，按 receiver 分别生成 Service。惯用的
 `sUser`、`sOrder` receiver 会生成 `IUser`、`IOrder` 及对应的 getter 和 `Register` 函数。Controller 依赖 Service 接口，不直接依赖具体 Logic 类型。
 Logic 方法签名中的显式 import alias 会原样保留在生成的 Service 中。
+生成器仍能读取历史项目中同包的多个 receiver，但 `gx init` 模板和项目 skills 的规范是一个
+`internal/logic/<name>/` 目录只放一个主要 receiver；新增第二个业务类时创建独立 Logic 目录和 Service。
 命名模式首次创建的 Logic 不带 `DO NOT EDIT`，由开发者替换占位模型并实现业务；后续使用
 `gx service --module <module>` 从真实导出方法重生成 Service。
 
@@ -202,7 +208,8 @@ internal/model/entity/**/*.gen.go
 ```
 
 `gx dao` 会先在 module 内的临时目录生成、修复数据库注释可能造成的非法 struct tag，并校验全部
-Go 文件；验证通过后才成对替换 DAO/Entity。后续依赖更新或 `go mod tidy` 失败时，旧生成目录、
+Go 文件；验证通过后才成对替换 DAO/Entity。依赖整理使用 `go mod tidy -e`，因此项目中无关包暂时存在
+编译或加载错误时仍可完成生成；生成输入、生成文件、`go.mod` 本身或其它不可恢复错误不会被忽略。后续依赖更新或整理失败时，旧生成目录、
 `go.mod` 和 `go.sum` 会回滚。成功执行仍是完整重建，会删除数据库中已不存在的生成项；禁止把业务
 手写代码放进上述目录，执行前仍需确认 `.env` 指向正确数据库。生成成功但旧备份无法清理时，命令
 返回错误并保留可定位的备份目录。

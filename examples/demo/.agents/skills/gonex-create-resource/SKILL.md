@@ -25,7 +25,13 @@ API Req/Res → Controller 契约与实现 → Service 接口 → Logic 实现 �
 
 - API 类型声明 HTTP 契约；不要让 Logic 接收 API Req/Res。
 - Controller 只映射 API/领域模型、调用 Service、转换 HTTP 错误。
-- Logic 持有业务规则和数据访问编排；Service 是由 Logic 导出方法生成的稳定调用边界。
+- 每个 `internal/logic/<name>` 目录只实现一个主要 Logic 结构体；第二个业务结构体必须拆到独立目录。
+- 跨层或跨 Logic 复用的导出结构体统一放 `internal/model`；API 专用 Req/Res 和生成 Entity 不属于
+  公共业务模型。
+- 除 bootstrap 初始化连接和 gx 生成 DAO 外，所有业务数据库读写、事务、Raw SQL 都只能写在 Logic。
+  Logic 优先使用 `dao.Q`，生成 DAO 无法表达时使用项目已有的全局 DB；禁止自行创建 DAO、Repository
+  或数据库连接。配置统一读取 `g.Cfg()`，不另建或注入第二套全局状态。
+- Service 是由 Logic 导出方法生成的稳定调用边界；API、Controller、Service、model 不执行数据库操作。
 - 启动入口必须 blank-import `internal/logic` 聚合包，确保 Logic 的 `init` 注册执行。
 - 修改请求或 Logic 方法后，重新预览并同步 `gx ctrl`、`gx service` 的输出。
 

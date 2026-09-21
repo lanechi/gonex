@@ -6,14 +6,15 @@
 | --- | --- | --- |
 | `api/<module>/<module>.go` | 模块级 Controller 接口 | 数据库 Entity、业务事务、直接查询 |
 | `api/<module>/<version>` | HTTP 元数据、Req/Res、参数校验 | 数据库 Entity、业务事务、直接查询 |
-| `internal/controller/<module>` | API/领域映射、Service 调用、HTTP 错误 | 直接 DAO/GORM、可复用业务规则 |
+| `internal/controller/<module>` | API/领域映射、Service 调用、HTTP 错误 | DAO/全局 DB/GORM、可复用业务规则 |
 | `internal/service` | 由 Logic 签名生成的接口和注册入口 | 手写实现、直接编辑生成文件 |
-| `internal/logic/<module>` | 业务规则、用例编排、领域错误 | 依赖 API Req/Res、HTTP 状态、Gin Context |
-| `internal/model` | 应用/领域模型 | 泄漏传输或持久化细节到所有层 |
-| `internal/dao` / entity 生成目录 | gx/GORM Gen 产物 | 手写业务代码 |
+| `internal/logic/<name>` | 单个 receiver、全部业务数据库操作、业务规则与用例编排 | 建连接、创建 DAO/Repository、API/HTTP 类型 |
+| `internal/model` | 跨层/跨 Logic 复用的应用与领域结构体 | API 绑定类型、生成 Entity、重复持久化细节 |
+| `internal/dao` / entity 生成目录 | gx/GORM Gen 产物 | 手写 DAO、Repository 或业务代码 |
+| `internal/bootstrap/db` | 初始化、暴露并关闭唯一全局 DB | 业务查询、事务、领域规则 |
 | `internal/logic/logic.go` | Logic 模块 blank import 聚合 | 手工维护与 gx 竞争 |
 
-项目可以采用不同命名，但依赖方向和所有权必须可解释且一致。
+这是 demo 及其派生项目的固定目录契约；除非用户明确要求重构架构，不采用另一套命名或所有权规则。
 
 ## 2. API 审查
 
@@ -36,16 +37,26 @@
 ## 4. Logic 与 Service 审查
 
 - Logic 不依赖 API 或 HTTP 类型，公开方法第一参数是 `context.Context`。
+- 除 bootstrap 建连/关闭和 gx 生成文件外，查询、写入、事务、Raw SQL 全部位于 Logic；Controller、
+  Service、model、Middleware、Scheduler handler 没有数据库调用。
+- 每个 Logic 目录只有一个主要 receiver；需要第二个业务类时已拆成独立目录和独立 Service。
 - 仅真正的服务能力导出 receiver 方法，内部 helper 非导出。
 - Service 生成接口与 Logic 当前签名一致；没有手改 `DO NOT EDIT`。
-- 同一 Logic 模块的多个 receiver 已分别生成并注册对应 Service；签名中的 import alias 没有被丢失。
+- 每个 Logic 目录的唯一 receiver 已生成并注册对应 Service；签名中的 import alias 没有被丢失。
 - Logic 注册、聚合 blank import、应用入口导入形成完整链路。
+- 启动顺序完成 `config.Init()`、数据库初始化、`dao.SetDefault` 后才接收请求；关闭仍由启动层负责。
+- Logic 使用 `g.Cfg()`，数据库优先使用 `dao.Q.<table>.WithContext(ctx)`；DAO 无法表达时只使用现有
+  全局 DB 的 `WithContext(ctx)`。没有 `gorm.Open`、`sql.Open`、手写 DAO/Repository、连接或 Query
+  副本，Controller 也没有绕过 Service 使用这些入口。
+- 跨层复用的导出结构体只在 `internal/model` 定义一次；API Req/Res 留在 API，生成 Entity 留在
+  `internal/model/entity`，映射边界清楚。
 - 事务、幂等、资源级授权和状态转换位于 Logic；敏感数据不进入日志。
 - 错误可分类并保留链，Controller 不依赖字符串匹配。
 
 ## 5. 生成与工作区安全
 
-- 写入前运行目标 `gx ... --dry-run`，计划范围与当前 module 一致。
+- `gx ctrl`、`gx service` 写入前运行对应 `--dry-run`，计划范围与当前 module 一致；`gx dao` 不支持
+  dry-run，按下一条单独审查。
 - 非明确清理任务不运行 `gx ctrl --clean`。
 - 数据库目标、表范围和生成目录未确认时不运行 `gx dao`。命令失败必须保留旧 DAO/Entity、`go.mod`
   和 `go.sum`；成功仍是完整替换。
@@ -63,6 +74,8 @@
 | API 字段或路由 | Controller 契约、OpenAPI、HTTP 测试、README |
 | Logic 方法签名 | Service 生成文件、Controller 调用、Logic 测试 |
 | 新 Logic 模块 | 注册函数、聚合 blank import、应用入口 |
+| 新公共业务结构体 | `internal/model`、API/Entity 映射、Service 签名、序列化测试 |
+| DAO、全局 DB 或配置使用 | 数据库代码仅在 Logic、bootstrap 初始化顺序、Context、关闭路径 |
 | 错误语义 | Controller 映射、业务码文档、成功/失败测试 |
 | gx 命令或目录约定 | 项目 AGENTS、README、CI/脚本 |
 

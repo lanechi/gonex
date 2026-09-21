@@ -52,7 +52,8 @@ path/query/header/cookie/form 支持 string、bool、整数、无符号整数、
 - `binding` 用于绑定层规则和必填语义，例如 `required`。
 - `validate` 用于业务形状，例如 `gte`、`lte`、`min`、`max`、`oneof`、格式校验。
 - 两组规则都在 Controller 调用前执行；Controller 不应重复同一校验。
-- 项目通过 `WithValidator` 注入同一 Validator 时，两组标签仍分别执行；自定义规则必须注册在该实例。
+- `binding` 与 `validate` 使用两个独立 Validator。需要自定义时分别通过 `WithBindingValidator`、
+  `WithValidator` 注入不同实例；禁止共享同一个实例。构造 Server 前完成规则注册，运行后视为只读。
 - 对 string/slice/map，`min`、`max` 表示长度；对数字表示数值边界。
 - 当 `0`、`false` 或空字符串是合法的显式输入时，使用指针区分缺失值，避免 `required` 把合法零值
   判为空。
@@ -114,6 +115,10 @@ type UploadAvatarReq struct {
 ## 6. 响应模型
 
 - 使用专用响应 DTO，避免直接返回数据库 Entity。
+- 只服务于单个 HTTP 动作的 Req/Res 留在 API 包；跨动作、跨层或跨 Logic 复用的导出结构体统一定义在
+  `internal/model`，由 API DTO 显式组合或映射。不要把带 `g.Meta`、绑定标签的请求结构体放进 model。
+- `internal/model/entity` 是 `gx dao` 生成的持久化模型，不是公共业务模型目录；禁止因为字段相同而
+  直接把 Entity 暴露为响应。
 - 响应可以是普通值或指针；除 struct 外，也支持命名 slice、map、标量等可由 JSON 编码器处理的类型，例如
   `type AppUserReviewsRes []model.AppEvaluationReview`。
 - 列表明确 `items`、分页和 `total` 的语义；空列表使用项目约定的空 slice/null 行为。

@@ -29,7 +29,9 @@ func (*ControllerV1) CreateUser(
 }
 ```
 
-模型名以项目实际定义为准。不要为了照抄示例创建重复 DTO。
+模型名以项目实际定义为准。跨 Controller、Service、Logic 复用的结构体必须放在 `internal/model`；
+不要为了照抄示例在 Controller 或 Logic 中创建重复 DTO。API 专用 Req/Res 仍留在 API 包，生成 Entity
+仍只属于持久化层。
 
 ## 2. 错误边界
 
@@ -69,6 +71,9 @@ requestContext := ghttp.FromContext(ctx)
 同一请求多次调用 `Session()` 返回同一实例，因此 Middleware 写入的值可被 Controller 读取；调用
 `Logout` 后旧 handle 不得继续写入，再次需要 Session 时从 Context 重新获取。不要把
 Session 保存到请求之外；自定义远程存储应实现 context-aware storage，让取消和 tracing 进入 I/O。
+
+Controller 不读取 `g.Cfg()`、不使用 `dao.Q` 或 `db.Postgres()`。即使这些是项目全局入口，也只允许
+启动层初始化、Logic 消费；Controller 始终通过生成 Service 边界访问业务能力。
 
 ## 4. 直接响应
 

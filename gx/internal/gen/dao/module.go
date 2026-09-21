@@ -53,7 +53,11 @@ func ensureModelDependencies(project Project, result *Result) error {
 func runGoModTidy(projectRoot string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), goModTidyTimeout)
 	defer cancel()
-	command := exec.CommandContext(ctx, "go", "mod", "tidy")
+	// DAO generation validates its staged Go sources before publication. Use
+	// tidy's error-tolerant mode here so unrelated, temporarily broken project
+	// packages do not prevent those already-validated files from being
+	// published. Module-file errors and other fatal tidy failures still surface.
+	command := exec.CommandContext(ctx, "go", "mod", "tidy", "-e")
 	command.Dir = projectRoot
 	command.Stdout = os.Stdout
 	command.Stderr = os.Stderr

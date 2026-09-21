@@ -2,3 +2,5 @@ interface:
   display_name: "Gonex Design API"
   short_description: "Design gonex request models, tags, and validation"
   default_prompt: "Use $gonex-design-api to design the request and response models for this gonex endpoint."
+policy:
+  allow_implicit_invocation: true

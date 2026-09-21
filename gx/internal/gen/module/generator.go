@@ -30,6 +30,24 @@ const (
 	maxTemplateEntries  = 2048
 )
 
+type demoSkillSpec struct {
+	name       string
+	references []string
+}
+
+var demoSkillSpecs = []demoSkillSpec{
+	{name: "gonex-create-resource", references: []string{"references/workflow.md"}},
+	{name: "gonex-design-api", references: []string{"references/parameters.md"}},
+	{name: "gonex-implement-controller", references: []string{"references/controller-patterns.md"}},
+	{name: "gonex-implement-service", references: []string{"references/service-patterns.md"}},
+	{name: "gonex-review-project", references: []string{"references/conventions.md"}},
+	{name: "gonex-use-config"},
+	{name: "gonex-use-dao"},
+	{name: "gonex-use-data"},
+	{name: "gonex-use-logging"},
+	{name: "gonex-use-template"},
+}
+
 // InitOptions controls creation of a project from the canonical demo archive.
 type InitOptions struct {
 	ModulePath  string
@@ -348,21 +366,24 @@ func validateDemo(root string) error {
 		"go.mod", "main.go", "README.md", "AGENTS.md", ".env.example", ".gitignore", ".codex/config.toml",
 		".codex/agents/architect.toml", ".codex/agents/worker.toml", ".codex/agents/reviewer.toml",
 		".codex/agents/explorer.toml", ".codex/agents/tester.toml",
-		".agents/skills/gonex-create-resource/SKILL.md", ".agents/skills/gonex-design-api/SKILL.md",
-		".agents/skills/gonex-implement-controller/SKILL.md", ".agents/skills/gonex-implement-service/SKILL.md",
-		".agents/skills/gonex-review-project/SKILL.md", ".agents/skills/gonex-use-config/SKILL.md",
-		".agents/skills/gonex-use-logging/SKILL.md", ".agents/skills/gonex-use-template/SKILL.md",
-		".agents/skills/gonex-use-dao/SKILL.md", ".agents/skills/gonex-use-data/SKILL.md",
 		"api/hello/hello.go", "api/hello/v1/hello.go",
 		"internal/bootstrap/db/postgres.go", "internal/bootstrap/db/mysql.go", "internal/bootstrap/db/sqlite.go",
 		"internal/cmd/cmd.go", "internal/cmd/root.go",
 		"internal/controller/hello/hello.go", "internal/controller/hello/hello_new.go",
-		"internal/controller/hello/hello_v1_hello.go", "internal/logic/hello/hello.go", "internal/service/hello.go",
+		"internal/controller/hello/hello_v1_hello.go", "internal/logic/hello/hello.go",
+		"internal/model/testmodel.go", "internal/service/hello.go",
 	} {
-		info, err := os.Stat(filepath.Join(root, relative))
-		if err != nil || info.IsDir() {
-			return fmt.Errorf("template missing required file %s", relative)
+		if err := validateRequiredDemoFile(root, relative); err != nil {
+			return err
 		}
+	}
+	for _, skill := range demoSkillSpecs {
+		if err := validateDemoSkill(root, skill); err != nil {
+			return err
+		}
+	}
+	if err := validateDemoSkillRouting(root); err != nil {
+		return err
 	}
 	moduleSource, err := os.ReadFile(filepath.Join(root, "go.mod"))
 	if err != nil {
@@ -378,6 +399,13 @@ func validateDemo(root string) error {
 	}
 	if !bytes.Contains(rootSource, []byte(canonicalDemoName)) {
 		return fmt.Errorf("template project name marker %q is missing", canonicalDemoName)
+	}
+	commandSource, err := os.ReadFile(filepath.Join(root, "internal/cmd/cmd.go"))
+	if err != nil {
+		return fmt.Errorf("read template startup command: %w", err)
+	}
+	if !bytes.Contains(commandSource, []byte("g.Cfg()")) {
+		return fmt.Errorf("template startup command must use the global g.Cfg() configuration")
 	}
 	gitignoreSource, err := os.ReadFile(filepath.Join(root, ".gitignore"))
 	if err != nil {
@@ -399,6 +427,119 @@ func validateDemo(root string) error {
 		}
 	}
 	return nil
+}
+
+func validateRequiredDemoFile(root, relative string) error {
+	info, err := os.Stat(filepath.Join(root, filepath.FromSlash(relative)))
+	if err != nil || info.IsDir() {
+		return fmt.Errorf("template missing required file %s", relative)
+	}
+	return nil
+}
+
+func validateDemoSkill(root string, skill demoSkillSpec) error {
+	directory := path.Join(".agents/skills", skill.name)
+	skillFile := path.Join(directory, "SKILL.md")
+	metadataFile := path.Join(directory, "agents/openai.yaml")
+	for _, relative := range append([]string{skillFile, metadataFile}, skillReferences(directory, skill.references)...) {
+		if err := validateRequiredDemoFile(root, relative); err != nil {
+			return err
+		}
+	}
+
+	source, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(skillFile)))
+	if err != nil {
+		return fmt.Errorf("read template skill %s: %w", skill.name, err)
+	}
+	name, ok := skillFrontmatterName(string(source))
+	if !ok || name != skill.name {
+		return fmt.Errorf("template skill %s must declare frontmatter name %s", skill.name, skill.name)
+	}
+
+	metadata, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(metadataFile)))
+	if err != nil {
+		return fmt.Errorf("read template skill metadata %s: %w", skill.name, err)
+	}
+	defaultPrompt, ok := yamlSectionValue(string(metadata), "interface", "default_prompt")
+	if !ok || !strings.Contains(defaultPrompt, "$"+skill.name) {
+		return fmt.Errorf("template skill %s metadata default_prompt must reference $%s", skill.name, skill.name)
+	}
+	implicit, ok := yamlSectionValue(string(metadata), "policy", "allow_implicit_invocation")
+	if !ok || implicit != "true" {
+		return fmt.Errorf("template skill %s metadata must allow implicit invocation", skill.name)
+	}
+	return nil
+}
+
+func validateDemoSkillRouting(root string) error {
+	source, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+	if err != nil {
+		return fmt.Errorf("read template skill routing: %w", err)
+	}
+	for _, skill := range demoSkillSpecs {
+		if !bytes.Contains(source, []byte("$"+skill.name)) {
+			return fmt.Errorf("template AGENTS.md must route tasks to $%s", skill.name)
+		}
+	}
+	return nil
+}
+
+func skillReferences(directory string, references []string) []string {
+	files := make([]string, 0, len(references))
+	for _, reference := range references {
+		files = append(files, path.Join(directory, reference))
+	}
+	return files
+}
+
+func skillFrontmatterName(source string) (string, bool) {
+	lines := strings.Split(strings.ReplaceAll(source, "\r\n", "\n"), "\n")
+	if len(lines) < 3 || strings.TrimSpace(lines[0]) != "---" {
+		return "", false
+	}
+	name := ""
+	for _, line := range lines[1:] {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "---" {
+			return name, name != ""
+		}
+		key, value, found := strings.Cut(trimmed, ":")
+		if !found || strings.TrimSpace(key) != "name" {
+			continue
+		}
+		if name != "" {
+			return "", false
+		}
+		name = strings.Trim(strings.TrimSpace(value), "\"'")
+	}
+	return "", false
+}
+
+func yamlSectionValue(source, section, key string) (string, bool) {
+	currentSection := ""
+	for _, line := range strings.Split(strings.ReplaceAll(source, "\r\n", "\n"), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		indented := len(line) != len(strings.TrimLeft(line, " \t"))
+		if !indented {
+			if strings.HasSuffix(trimmed, ":") {
+				currentSection = strings.TrimSpace(strings.TrimSuffix(trimmed, ":"))
+			} else {
+				currentSection = ""
+			}
+			continue
+		}
+		if currentSection != section {
+			continue
+		}
+		candidate, value, found := strings.Cut(trimmed, ":")
+		if found && strings.TrimSpace(candidate) == key {
+			return strings.Trim(strings.TrimSpace(value), "\"'"), true
+		}
+	}
+	return "", false
 }
 
 func ignoresRootEnv(source string) bool {

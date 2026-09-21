@@ -24,6 +24,8 @@ func (*ControllerV1) Action(
 
 - 接收已绑定、已校验的 `req`；不要重复解析 path/query/JSON。
 - 映射为领域输入，调用对应的 `service.<Name>()`（单 receiver 通常是模块名），再映射为公开响应。
+- 跨层复用的输入、输出和领域结构体从 `internal/model` 使用；不要在 Controller 中声明与 Logic
+  重复的公共 DTO。API 专用 Req/Res 仍由 API 包拥有。
 - 透传 `context.Context`，不要替换成 `context.Background()`。
 - 预期业务错误转换为带稳定业务码和 HTTP 状态的 `ghttp.Error`；保留 `Cause` 供日志和错误链使用。
 - 普通 JSON 成功响应可以返回 `Res` 或 `*Res`，也可以使用命名 slice、map、标量等 JSON 可编码类型；gx 默认
@@ -32,7 +34,8 @@ func (*ControllerV1) Action(
 
 ## 边界
 
-Controller 不直接访问 GORM、DAO、数据库事务或具体 Logic 类型，不放置可复用业务规则。Logger、
+Controller 不直接访问 GORM、`dao.Q`、`g.Cfg()`、数据库事务或具体 Logic 类型，不放置可复用业务规则。
+配置和数据访问由 Logic 通过统一全局入口消费。Logger、
 Session、HTML 和底层 `net/http` 集成从 `ghttp.FromContext(ctx)` 获取；除非第三方集成确实要求，
 不要依赖 `Gin()`。
 

@@ -7,7 +7,7 @@ description: 在 gonex 应用中读取和组织 config.yaml、.env 与系统环�
 
 ## 读取来源与优先级
 
-默认使用 `g.Cfg()`。它会加载项目根目录的 `.env` 和第一个存在的默认配置文件：
+应用代码统一使用唯一全局入口 `g.Cfg()`。它会加载项目根目录的 `.env` 和第一个存在的默认配置文件：
 `config.yaml`、`config/config.yaml`、`manifest/config/config.yaml`。
 
 优先级为：
@@ -37,13 +37,19 @@ if err != nil {
 server := ghttp.NewServer(ghttp.WithConfig(cfg))
 ```
 
-只创建默认 Server 时，`ghttp.NewServer()` 会自动初始化默认配置；不要在多个 Server 中维护多份
-全局配置。测试或确实需要隔离时，使用 `config.Load(path)` 并将实例通过 `WithConfig` 注入。
+只创建默认 Server 时，`ghttp.NewServer()` 会自动初始化默认配置；但数据库、DAO 或其它基础设施早于
+Server 初始化时，必须显式 `config.Init()`。应用运行时不要维护多份配置，也不要把 `config.Config`
+保存到 Controller、Logic 或 DAO wrapper 中。
+
+仅测试独立 Server 配置行为时可以使用 `config.Load(path)` 并通过 `WithConfig` 注入；涉及业务 Logic
+的测试仍通过全局配置入口设置所需 key，并在结束时清理。修改全局配置的测试不得并行运行。
 
 ## 约束
 
 - 使用 `GetString`、`GetInt`、`GetBool` 或 `Unmarshal` 读取配置；结构体字段使用明确的
   `mapstructure` 标签。
+- 不新建 Viper 实例、自定义配置单例或 package-level 配置副本；方法只读取需要的 key，不向下传递
+  整个配置对象。
 - 不把密码、Token、Cookie secret 提交到 `config.yaml` 或 `.env`；生产环境优先使用部署平台 Secret
   注入进程环境。
 - `.env` 是明文文件，生产环境若不希望读取它，不要部署该文件；框架不会自动按生产模式禁用它。

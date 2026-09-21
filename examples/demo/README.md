@@ -33,7 +33,9 @@ config/                      Web Server 配置
 internal/cmd/                Cobra 命令与应用组合根
 internal/controller/         HTTP 边界和 gx Controller 契约（包文件、构造函数、动作实现）
 internal/bootstrap/db/       启动基础设施；postgres.go 启用，mysql.go/sqlite.go 为注释模板
-internal/logic/              业务实现和注册聚合
+internal/logic/<name>/       业务实现；每个目录只放一个主要 Logic receiver
+internal/model/              Controller、Service、Logic 复用的公共业务结构体
+internal/model/entity/       gx dao 生成的数据库 Entity，不作为公共业务模型
 internal/service/            gx 生成的 Service 接口
 resource/public/             静态资源
 resource/template/           HTML 模板
@@ -57,11 +59,18 @@ gx service
 Controller 动作实现和 Logic 由开发者维护。新增完整资源时可调用 `$gonex-create-resource`；参数设计、
 Controller、Service 和审查也有对应项目 skill。
 
+`AGENTS.md` 已按任务类型强制路由这些 skills，每个 skill 的 `agents/openai.yaml` 也显式允许隐式调用。
+`gx init` 会复制并校验完整 skill bundle，包括 `SKILL.md`、必需 references 和调用元数据，因此新项目会
+继承相同规范。实现 Logic 或数据库业务时必须组合使用 `$gonex-implement-service` 与
+`$gonex-use-dao`：除 bootstrap 初始化/关闭和 `gx dao` 生成外，所有查询、写入、事务和 Raw SQL 只能
+位于 Logic，并优先使用已有 `dao.Q`，DAO 无法表达时使用项目现有全局 DB。
+
 配置、模板和日志也有专用 skill：`$gonex-use-config` 说明 `config.yaml`、`.env`、系统环境变量
 和启动初始化顺序；`$gonex-use-template` 说明 HTML 模板根目录、模板函数和页面渲染；
-`$gonex-use-logging` 说明 Controller、Service、后台任务和基础设施的结构化日志；
+`$gonex-use-logging` 说明 Controller、Logic、后台任务和基础设施的结构化日志；
 `$gonex-use-dao` 说明 `gx dao` 生成和使用 DAO/Entity；`$gonex-use-data` 说明数据库、Redis 等
-启动基础设施、事务和数据访问分层。
+启动基础设施和全局连接生命周期。配置统一通过 `g.Cfg()` 获取；禁止在业务代码中自行创建 DAO、
+Repository、DB wrapper 或数据库连接。
 
 ## 定时任务
 

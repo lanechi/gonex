@@ -9,7 +9,7 @@
 - 最近的 `go.mod` 及 module path；
 - 项目适用的 `AGENTS.md`；
 - API 根目录、版本目录和路由分组前缀；
-- Controller、Logic、Service、model、DAO 与测试的现有布局；
+- Controller、Logic、Service、model、DAO 与测试的现有布局，以及全局 `dao.Q`、`g.Cfg()` 的初始化位置；
 - 应用入口是否 blank-import `internal/logic`；
 - 工作区是否已有未提交改动。
 
@@ -52,7 +52,7 @@ Service 与聚合文件由 gx 维护。
 骨架生成后：
 
 1. 把 API 占位字段改为真实 path/query/body/response 契约；
-2. 把 Logic 的占位模型和空实现改为真实领域输入输出；
+2. 把 Logic 的占位模型和空实现改为真实领域输入输出；跨层复用的结构体放入 `internal/model`；
 3. 在 Controller 动作实现中完成 API 与领域模型映射；
 4. 用扫描模式重新生成真实契约：
 
@@ -71,7 +71,7 @@ gx service --module user
 
 1. 手写开发者拥有的 `api/<module>/<module>.go` 或 `api/<module>/<version>/<action>.go`；
 2. 运行 `gx ctrl --dry-run`，确认只更新契约并首次创建缺少的动作实现；
-3. 手写或扩展 `internal/logic/<module>` 的公开业务方法；
+3. 手写或扩展 `internal/logic/<name>` 的公开业务方法；每个目录只允许一个主要 Logic receiver；
 4. 运行 `gx service --module <module> --dry-run`；
 5. 应用生成计划，再实现 Controller 映射。
 
@@ -93,6 +93,22 @@ gx service --module user
 API 层只暴露 HTTP 契约。不要让请求结构体直接复用数据库 Entity，也不要把内部错误、密码、
 令牌或审计字段放入响应。
 
+API 专用 Req/Res 留在版本目录。只有确实被 Controller、Service、Logic 或多个 Logic 目录共同使用的
+导出结构体才放入 `internal/model`；不要为了“统一模型”把带 `g.Meta`、绑定标签的请求类型移入 model。
+
+一个典型资源保持以下对应关系：
+
+```text
+api/user/v1/create.go                    # CreateUserReq/CreateUserRes，HTTP 契约
+internal/controller/user/user_v1_create.go # CreateUser，映射并调用 Service
+internal/logic/user/user.go              # 唯一 Logic receiver、New、注册
+internal/logic/user/create.go            # receiver 的 Create 方法，可按用例拆文件
+internal/model/user.go                    # 跨层复用的 User/CreateUserInput
+internal/service/user.go                  # gx 生成，不手改
+```
+
+API 与 Controller 动作按业务动作对应；Logic 可以按方法拆文件，但整个 `logic/user` 仍只有一个 receiver。
+
 ## 4. Logic 与 Service
 
 Logic 的导出 receiver 方法会被 `gx service` 扫描进 Service 接口。保持以下边界：
@@ -101,8 +117,13 @@ Logic 的导出 receiver 方法会被 `gx service` 扫描进 Service 接口。�
 - 仅供包内使用的辅助方法必须非导出；
 - 第一个参数使用 `context.Context`；
 - 不依赖 API Req/Res 或 `ghttp.Context`；
-- 单 receiver 模块通过 `service.Register<Module>(New())` 注册；多个 receiver 时按 gx 生成的
-  receiver-specific Service 接口和 `Register<Name>` 分别注册实现。
+- 每个 `internal/logic/<name>` 目录只包含一个主要 receiver，并通过 `service.Register<Name>(New())`
+  注册；需要另一个业务类时创建新目录，不在同一个包中增加第二个 receiver；
+- 除 bootstrap 建连和 gx 生成文件外，查询、写入、事务、Raw SQL 只能出现在 Logic；优先使用启动时
+  `dao.SetDefault` 初始化的 `dao.Q`，DAO 无法表达时使用项目已有的全局 DB accessor；
+- 禁止在 Logic 或其它业务层调用 `gorm.Open`、`sql.Open`、创建 DAO/Repository、保存连接副本；配置
+  统一读取 `g.Cfg()`，不保存 `config.Config` 或自建全局变量；
+- 跨层输入、输出和领域对象使用 `internal/model` 中的公共结构体，不在 Controller/Logic 重复定义。
 
 修改 Logic 方法签名后，总是重新生成对应 Service，并修复 Controller 调用处。
 
@@ -122,7 +143,8 @@ Controller 实现只承担 HTTP 边界。确认新 Controller 已传给 `Server.
 | `api/<module>/<version>/*.go` | 开发者 | 直接编辑；标准骨架仅首次创建 |
 | Controller `<module>.go`、`<module>_new.go` | gx | 修改 API 后运行 `gx ctrl` |
 | Controller 动作实现 | 开发者 | 在首次生成文件中实现业务映射 |
-| `internal/logic/<module>/*.go` | 开发者 | 直接编辑公开业务方法 |
+| `internal/logic/<name>/*.go` | 开发者 | 一个目录一个主要 Logic receiver；可按职责拆多个文件 |
+| `internal/model/*.go` | 开发者 | 跨层/跨 Logic 复用的业务结构体，按领域组织 |
 | `internal/service/*.go` | gx | 修改 Logic 后运行 `gx service` |
 | `internal/logic/logic.go` | gx | 由 `gx service` 同步 blank import |
 | DAO / Entity 生成目录 | gx / GORM Gen | 通过 `gx dao` 重建 |
@@ -141,6 +163,9 @@ Controller 实现只承担 HTTP 边界。确认新 Controller 已传给 `Server.
 - HTTP 成功、缺失参数、非法参数、未找到、冲突和权限失败；
 - path 参数与字段绑定、JSON Content-Type、分页边界；
 - Service 注册和应用入口 blank import；
+- 每个 Logic 目录只有一个主要 receiver，公共结构体没有散落在 Controller/Logic；
+- 启动顺序已完成 `config.Init()`、数据库初始化和 `dao.SetDefault`；所有业务数据库操作位于 Logic，
+  且只使用 `dao.Q` 或项目现有的全局 DB；
 - `/openapi.json` 中的方法、路径、required、schema 和安全声明；
 - 生成器再次 dry-run 时结果为预期或 unchanged；
 - README/AGENTS 与实际命令、路由、目录同步。

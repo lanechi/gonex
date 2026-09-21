@@ -13,13 +13,17 @@ description: 审查 gonex 项目的 API、Controller、Logic、Service、生成�
 1. 读取全部适用的 `AGENTS.md`、`go.mod` 和变更差异，区分用户已有改动与本次变更。
 2. 沿每个受影响动作追踪：`Req/Res → Controller → Service → Logic → 注册 → 测试/文档`。
 3. 先检查生成文件所有权，再评估实现；任何手改 `DO NOT EDIT` 文件都视为同步问题。
-4. 对框架仓库变更额外检查核心测试、`gx` 模板/生成结果、相关 `examples`、README 和架构文档。
+4. 全仓搜索 `gorm.Open`、`sql.Open`、`dao.Q`、全局 DB accessor、`Raw`、`Exec`、`Transaction`；除
+   bootstrap 建连/关闭和生成 DAO 外，任何不在 Logic 的数据库操作都报告为违规。
+5. 对框架仓库变更额外检查核心测试、`gx` 模板/生成结果、相关 `examples`、README 和架构文档。
 
 ## 优先级
 
 - 严重：安全绕过、数据损坏、生成器破坏手写文件、路由或 Service 在运行时不可用。
-- 高：API 参数绑定错误、路径参数不匹配、Controller 绕过 Service、Logic 未注册、错误响应泄漏。
-- 中：生成契约过期、Context 未透传、校验/OpenAPI/测试与行为不一致、同步文件遗漏。
+- 高：API 参数绑定错误、路径参数不匹配、数据库操作写在 Logic 之外、业务代码自行建连/建 DAO、
+  Controller 绕过 Service、Logic 未注册、错误响应泄漏。
+- 中：生成契约过期、Context 未透传、Logic 单目录多类、公共模型散落、重复全局状态、
+  校验/OpenAPI/测试与行为不一致、同步文件遗漏。
 - 低：不影响契约的局部可维护性问题。
 
 每条发现必须给出文件与行号、可观察影响、触发条件和最小修复方向。不要把风格偏好当缺陷；没有
@@ -28,7 +32,13 @@ description: 审查 gonex 项目的 API、Controller、Logic、Service、生成�
 ## 重点不变量
 
 - 请求字段来源和 `g.Meta` 与实际 HTTP 路由一致，path 参数一一对应。
-- Controller 不访问 DAO，Logic 不依赖 API 或 HTTP Context。
+- 除 bootstrap 建连/关闭和 gx 生成 DAO 外，全部数据库操作都在 Logic；其它层只调用 Service。Logic
+  只使用 `dao.Q` 或项目现有的全局 DB，没有自行创建 DAO、Repository 或连接。
+- Controller 不访问 DAO/全局 DB，Logic 不依赖 API 或 HTTP Context。
+- 每个 `internal/logic/<name>` 目录只有一个主要 Logic receiver；没有在同一包堆叠多个服务类。
+- 跨层公共结构体位于 `internal/model`；API DTO、生成 Entity 和公共业务模型没有混用或重复声明。
+- 启动层只初始化一次配置、数据库和 `dao.Q`；业务代码统一使用 `g.Cfg()`、`dao.Q`/全局 DB 等既有入口，
+  没有注入或复制第二套全局状态。
 - Service 接口来自 Logic 导出签名，注册链完整。
 - 直接写响应后不会再返回触发统一编码的值或错误。
 - 生成命令先 dry-run；`--clean` 和 `dao` 的破坏范围经过确认。

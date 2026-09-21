@@ -1,4 +1,6 @@
 interface:
   display_name: "Gonex DAO"
   short_description: "Generate and use gonex GORM DAO"
-  default_prompt: "Use $gonex-use-dao to update or use database DAO and Entity code safely."
+  default_prompt: "Use $gonex-use-dao to generate DAO/Entity code or implement database access only inside Logic with dao.Q or the global DB."
+policy:
+  allow_implicit_invocation: true
