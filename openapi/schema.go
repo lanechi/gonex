@@ -3,13 +3,13 @@ package openapi
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"mime/multipart"
 	"reflect"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/lanechi/gonex/router"
 )
 
@@ -183,7 +183,7 @@ func firstNonEmptyTag(f reflect.StructField, names ...string) string {
 }
 func parseJSONTagValue(raw string) any {
 	var v any
-	if json.Unmarshal([]byte(raw), &v) == nil {
+	if sonic.Unmarshal([]byte(raw), &v) == nil {
 		return v
 	}
 	if x, e := strconv.ParseBool(raw); e == nil {

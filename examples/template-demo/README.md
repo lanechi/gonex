@@ -10,8 +10,8 @@
 - `fsnotify` 监听模板文件变化并清理缓存；
 - 下一次请求重新解析模板，无需重启进程。
 
-本目录是独立 module `github.com/lanechi/gonex/examples/template-demo`，通过本地 `replace` 使用
-仓库内 gonex。
+本目录是独立 module `github.com/lanechi/gonex/examples/template-demo`，通过 `go.mod` 中的已发布版本
+依赖 gonex，不引用仓库内的本地 module。
 
 ## 运行
 

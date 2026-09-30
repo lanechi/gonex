@@ -2,13 +2,10 @@ module github.com/lanechi/gonex/examples/quick-demo
 
 go 1.27.0
 
-replace github.com/lanechi/gonex => ../..
-
-replace github.com/lanechi/gonex/contrib/gormlog => ../../contrib/gormlog
-
 require (
-	github.com/lanechi/gonex v0.1.4
-	github.com/lanechi/gonex/contrib/gormlog v0.0.0
+	github.com/bytedance/sonic v1.15.3
+	github.com/lanechi/gonex v1.1.0
+	github.com/lanechi/gonex/contrib/gormlog v0.1.0
 	github.com/shopspring/decimal v1.4.0
 	github.com/spf13/cobra v1.10.2
 	gorm.io/driver/postgres v1.6.1
@@ -17,7 +14,6 @@ require (
 
 require (
 	github.com/bytedance/gopkg v0.1.4 // indirect
-	github.com/bytedance/sonic v1.15.3 // indirect
 	github.com/bytedance/sonic/loader v0.5.2 // indirect
 	github.com/cloudwego/base64x v0.1.7 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
@@ -64,7 +60,7 @@ require (
 	go.uber.org/zap v1.28.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/arch v0.30.0 // indirect
-	golang.org/x/crypto v0.55.0 // indirect
+	golang.org/x/crypto v0.56.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect

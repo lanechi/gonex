@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/lanechi/gonex/gx/internal/buildinfo"
 	"github.com/lanechi/gonex/gx/internal/gen"
 	"github.com/spf13/cobra"
 )
@@ -31,7 +32,7 @@ func newRootCommand() *cobra.Command {
 			return command.Help()
 		},
 	}
-	command.AddCommand(newInitCommand(), newDAOCommand(), newCtrlCommand(), newServiceCommand())
+	command.AddCommand(newVersionCommand(), newInitCommand(), newDAOCommand(), newCtrlCommand(), newServiceCommand())
 	command.SetHelpTemplate(`{{with (or .Long .Short)}}{{.}}{{end}}
 
 用法:
@@ -43,6 +44,18 @@ func newRootCommand() *cobra.Command {
 {{.LocalNonPersistentFlags.FlagUsages | trimRightSpace}}{{end}}
 `)
 	return command
+}
+
+func newVersionCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "显示 gx 版本",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			_, err := fmt.Fprintf(command.OutOrStdout(), "gx %s\n", buildinfo.Version())
+			return err
+		},
+	}
 }
 
 func newInitCommand() *cobra.Command {

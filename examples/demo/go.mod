@@ -3,8 +3,8 @@ module github.com/lanechi/gonex/examples/demo
 go 1.27.0
 
 require (
-	github.com/lanechi/gonex v0.1.4
-	github.com/lanechi/gonex/contrib/gormlog v0.0.0
+	github.com/lanechi/gonex v1.1.0
+	github.com/lanechi/gonex/contrib/gormlog v0.1.0
 	github.com/spf13/cobra v1.10.2
 	gorm.io/driver/postgres v1.6.1
 	gorm.io/gorm v1.31.2
@@ -66,7 +66,3 @@ require (
 	golang.org/x/text v0.41.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )
-
-replace github.com/lanechi/gonex => ../..
-
-replace github.com/lanechi/gonex/contrib/gormlog => ../../contrib/gormlog

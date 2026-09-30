@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+
+	"github.com/bytedance/sonic"
 )
 
 // Normalize converts value into a detached JSON-safe representation. Numbers
@@ -15,7 +17,7 @@ import (
 // boundary. Unsupported values, cycles, NaN, and infinities are rejected by
 // encoding/json rather than retained by reference.
 func Normalize(value any) (any, error) {
-	data, err := json.Marshal(value)
+	data, err := sonic.Marshal(value)
 	if err != nil {
 		return nil, fmt.Errorf("session value is not JSON-safe: %w", err)
 	}

@@ -62,6 +62,7 @@ GET http://127.0.0.1:8000/hello?name=gonex
 ```bash
 go install github.com/lanechi/gonex/gx@latest
 gx --help
+gx version
 ```
 
 按需安装第三方日志适配：
@@ -73,12 +74,16 @@ go get github.com/lanechi/gonex/contrib/redislog
 
 这两个 `contrib` 包是独立 module，不会把 GORM/Redis 加入只使用 gonex core 的应用依赖图。
 
-核心 module 与 `gx` 使用独立版本标签：
+核心、`gx` 与可发布的 `contrib` modules 使用独立模块标签；每次发布入口可为这些模块指定同一个版本号：
 
 ```text
-core: vX.Y.Z
-gx:   gx/vX.Y.Z
+core:              vX.Y.Z
+gx:                gx/vX.Y.Z
+contrib/gormlog:   contrib/gormlog/vX.Y.Z
+contrib/redislog:  contrib/redislog/vX.Y.Z
 ```
+
+在 GitHub Actions 的 **Release modules** 工作流中手动运行，输入版本号（例如 `0.2.0`），即可在默认分支当前提交通过 CI 后创建以上 tags 和 GitHub Releases。Go module 通过 Git tag 发布；GitHub Release 用于展示版本记录。`examples/*` 与 `benchmarks/*` 是演示和验证模块，不单独发布。
 
 ## 能力
 
@@ -96,7 +101,7 @@ gx:   gx/vX.Y.Z
 - lifecycle hooks、background tasks、优雅退出/重启；
 - 每个 Server 独立 Scheduler；
 - 持久任务 Loader、HandlerRegistry、Locker、Recorder；
-- `gx controller` / `gx service` / `gx dao`。
+- `gx version` / `gx ctrl` / `gx service` / `gx dao`。
 
 ## 配置优先级
 

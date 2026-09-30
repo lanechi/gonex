@@ -3,11 +3,12 @@ package logging
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/bytedance/sonic"
 )
 
 func TestZapLoggerLevelsFieldsWithAndNamed(t *testing.T) {
@@ -33,7 +34,7 @@ func TestZapLoggerLevelsFieldsWithAndNamed(t *testing.T) {
 		t.Fatalf("entries=%d output=%q", len(lines), output.String())
 	}
 	var entry map[string]any
-	if err := json.Unmarshal([]byte(lines[0]), &entry); err != nil {
+	if err := sonic.Unmarshal([]byte(lines[0]), &entry); err != nil {
 		t.Fatal(err)
 	}
 	if entry["logger"] != "server" || entry["service"] != "api" || entry["count"] != float64(1) || entry["level"] != "debug" {

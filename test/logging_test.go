@@ -3,10 +3,10 @@ package ghttp_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/bytedance/sonic"
 	"github.com/gin-gonic/gin"
 	"github.com/lanechi/gonex/ghttp"
 	"github.com/lanechi/gonex/logging"
@@ -30,7 +30,7 @@ func TestLoggingModuleIsUsableByExternalModules(t *testing.T) {
 		t.Fatalf("log entries = %d, output=%q", len(entries), output.String())
 	}
 	var entry map[string]any
-	if err := json.Unmarshal([]byte(entries[0]), &entry); err != nil {
+	if err := sonic.Unmarshal([]byte(entries[0]), &entry); err != nil {
 		t.Fatal(err)
 	}
 	if entry["msg"] != "database connected" || entry["logger"] != "database" || entry["driver"] != "test" {

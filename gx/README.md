@@ -10,6 +10,7 @@
 ```bash
 go install github.com/lanechi/gonex/gx@latest
 gx --help
+gx version
 ```
 
 `gx` 是仓库子目录中的独立 Go module。发布正式版本时，Git tag 必须使用
@@ -21,7 +22,10 @@ gx --help
 cd gx
 go build -o /tmp/gx .
 /tmp/gx --help
+/tmp/gx version
 ```
+
+`gx version` 从 Go build information 读取模块版本：使用 `go install ...@vX.Y.Z` 安装会显示该版本；本地源码构建会在 Git 信息可用时显示 Go 推导出的 pseudo-version，并在有未提交修改时带上 `+dirty`。没有版本信息时显示 `(devel)`。
 
 所有生成命令都从当前目录向上查找最近的 `go.mod`，因此可以从项目子目录执行；生成根目录仍以
 发现的 module root 为准。
@@ -30,6 +34,7 @@ go build -o /tmp/gx .
 
 | 命令 | 作用 |
 | --- | --- |
+| `gx version` | 显示当前构建的 gx 版本 |
 | `gx completion` | 生成 Bash、Zsh、Fish 或 PowerShell 补全 |
 | `gx init` | 下载规范 `examples/demo/` 并初始化 PostgreSQL 项目 |
 | `gx ctrl` | 从 `api/` 请求定义生成 Controller |
@@ -40,6 +45,7 @@ go build -o /tmp/gx .
 
 ```bash
 gx --help
+gx version
 gx init --help
 gx ctrl --help
 gx service --help
@@ -109,8 +115,9 @@ pseudo-version 从对应 commit 下载，只有本地 `(devel)` 构建使用 `ma
 Controller、Service 等普通生成写入统一经过 `internal/gen/fs` 的 staging transaction，先校验项目相对路径，
 再提交生成文件；DAO/Entity 继续使用双目录替换事务，以保证两个生成目录成对更新和失败回滚。
 
-仓库内 `examples/demo/go.mod` 使用本地 `replace` 以便 CI 验证；初始化时该 `replace` 和占位 gonex requirement
-会被移除。进入新项目运行 `go mod tidy` 后，Go 会解析当前发布的 gonex 版本。`--force` 会先备份再
+仓库内 `examples/demo/go.mod` 只使用已发布的 gonex 与 `contrib/gormlog` 版本，不引用仓库内的本地 module。
+初始化时 gx 会移除模板中的 gonex requirement；进入新项目运行 `go mod tidy` 后，Go 会解析当前发布的
+gonex 版本。`--force` 会先备份再
 整体替换目标，而不是合并文件；使用前应确认目录可以被替换。新项目已经提交后若旧备份清理失败，
 命令会返回错误并明确保留的备份路径，不会静默报告成功。
 

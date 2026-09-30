@@ -11,6 +11,7 @@ import (
 	typemapping "github.com/lanechi/gonex/gx/internal/type_mapping"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
+
 	"gorm.io/driver/sqlite"
 	"gorm.io/driver/sqlserver"
 	"gorm.io/gen"
@@ -67,7 +68,10 @@ func buildTypeMapping(
 		if err != nil {
 			return typemapping.Mapping{}, fmt.Errorf("read columns for table %s: %w", tableName, err)
 		}
-		introspected = append(introspected, typemapping.TableColumns{Table: tableName, Columns: columns})
+		introspected = append(introspected, typemapping.TableColumns{
+			Table: tableName,
+			Columns: columns,
+		})
 	}
 	mapping := typemapping.BuildDataTypeMap(driver, introspected)
 	for _, warning := range mapping.Warnings {

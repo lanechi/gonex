@@ -3,11 +3,11 @@ package hello_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/bytedance/sonic"
 	"github.com/lanechi/gonex/examples/quick-demo/internal/controller/hello"
 	_ "github.com/lanechi/gonex/examples/quick-demo/internal/logic"
 	"github.com/lanechi/gonex/examples/quick-demo/internal/model"
@@ -44,7 +44,7 @@ func TestOrderControllerUsesRegisteredServiceAndValidatesRequests(t *testing.T) 
 			Status       string `json:"status"`
 		} `json:"data"`
 	}
-	if err := json.Unmarshal(success.Body.Bytes(), &response); err != nil {
+	if err := sonic.Unmarshal(success.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
 	if response.Code != 0 || response.Data.ID != 1002 || response.Data.CustomerName != "accepted:Lane" ||
@@ -87,7 +87,7 @@ func TestOrderControllerUsesRegisteredServiceAndValidatesRequests(t *testing.T) 
 			Tag   string `json:"tag"`
 		} `json:"details"`
 	}
-	if err := json.Unmarshal(pathFailure.Body.Bytes(), &pathResponse); err != nil {
+	if err := sonic.Unmarshal(pathFailure.Body.Bytes(), &pathResponse); err != nil {
 		t.Fatal(err)
 	}
 	if len(pathResponse.Details) != 1 || pathResponse.Details[0].Field != "ID" || pathResponse.Details[0].Tag != "gt" {

@@ -11,11 +11,11 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"runtime/debug"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/lanechi/gonex/gx/internal/buildinfo"
 	"golang.org/x/mod/modfile"
 	gomodule "golang.org/x/mod/module"
 	"golang.org/x/mod/semver"
@@ -83,7 +83,7 @@ func discover(target string, options InitOptions) (Discovery, error) {
 	}
 	url := strings.TrimSpace(options.TemplateURL)
 	if url == "" {
-		url = templateURL(buildVersion())
+		url = templateURL(buildinfo.Version())
 	}
 	return Discovery{Target: target, Name: name, URL: url, Options: options}, nil
 }
@@ -211,13 +211,6 @@ func validateProjectName(name string) error {
 		}
 	}
 	return nil
-}
-
-func buildVersion() string {
-	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Path == "github.com/lanechi/gonex/gx" {
-		return info.Main.Version
-	}
-	return "(devel)"
 }
 
 func templateURL(version string) string {

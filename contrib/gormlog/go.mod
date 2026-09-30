@@ -3,7 +3,7 @@ module github.com/lanechi/gonex/contrib/gormlog
 go 1.27.0
 
 require (
-	github.com/lanechi/gonex v0.1.4
+	github.com/lanechi/gonex v1.1.0
 	gorm.io/gorm v1.31.2
 )
 
@@ -13,5 +13,3 @@ require (
 	go.uber.org/zap v1.28.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 )
-
-replace github.com/lanechi/gonex => ../..

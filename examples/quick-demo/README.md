@@ -4,8 +4,8 @@
 API/Controller/Logic/Service 分层、多 Server、生命周期，以及已有项目反复执行 `gx` 的兼容性。
 `gx init` 的唯一项目模板是 [`../demo`](../demo/README.md)；本目录不作为初始化文件来源。
 
-本目录是独立 module `github.com/lanechi/gonex/examples/quick-demo`，通过 `go.mod` 中的
-`replace github.com/lanechi/gonex => ../..` 使用本地框架。
+本目录是独立 module `github.com/lanechi/gonex/examples/quick-demo`，通过 `go.mod` 中的已发布版本依赖
+gonex 与 `contrib/gormlog`，不引用仓库内的本地 module。
 
 ## 目录职责
 

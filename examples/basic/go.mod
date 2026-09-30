@@ -2,7 +2,7 @@ module github.com/lanechi/gonex/examples/basic
 
 go 1.27.0
 
-require github.com/lanechi/gonex v0.0.0-20260822044701-98811ca3a7b9
+require github.com/lanechi/gonex v1.1.0
 
 require (
 	github.com/bytedance/gopkg v0.1.4 // indirect
@@ -52,5 +52,3 @@ require (
 	golang.org/x/text v0.41.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )
-
-replace github.com/lanechi/gonex => ../..

@@ -1,0 +1,109 @@
+name: Release modules
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Shared semantic version, for example 0.2.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-modules
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - name: Validate release request
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]]; then
+            echo "Releases must run from the default branch ($DEFAULT_BRANCH)." >&2
+            exit 1
+          fi
+
+          version="${INPUT_VERSION#v}"
+          if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Version must be a stable semantic version such as 0.2.0 or v0.2.0." >&2
+            exit 1
+          fi
+
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
+  verify:
+    needs: prepare
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: [prepare, verify]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Create module tags and GitHub Releases
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          tags=(
+            "v${VERSION}"
+            "gx/v${VERSION}"
+            "contrib/gormlog/v${VERSION}"
+            "contrib/redislog/v${VERSION}"
+          )
+          modules=(
+            "github.com/lanechi/gonex"
+            "github.com/lanechi/gonex/gx"
+            "github.com/lanechi/gonex/contrib/gormlog"
+            "github.com/lanechi/gonex/contrib/redislog"
+          )
+
+          for tag in "${tags[@]}"; do
+            if git show-ref --verify --quiet "refs/tags/$tag"; then
+              echo "Tag already exists: $tag" >&2
+              exit 1
+            fi
+          done
+
+          refspecs=()
+          for index in "${!tags[@]}"; do
+            tag="${tags[$index]}"
+            module="${modules[$index]}"
+            git tag -a "$tag" "$GITHUB_SHA" -m "Release $module v${VERSION}"
+            refspecs+=("refs/tags/$tag:refs/tags/$tag")
+          done
+
+          git push origin "${refspecs[@]}"
+
+          for index in "${!tags[@]}"; do
+            tag="${tags[$index]}"
+            module="${modules[$index]}"
+            if [[ "$module" == "github.com/lanechi/gonex/gx" ]]; then
+              printf -v notes 'Go module: `%s`\n\nInstall the CLI with: `go install %s@v%s`' "$module" "$module" "$VERSION"
+            else
+              printf -v notes 'Go module: `%s`\n\nAdd it to an application with: `go get %s@v%s`' "$module" "$module" "$VERSION"
+            fi
+            gh release create "$tag" --title "$tag" --notes "$notes"
+          done

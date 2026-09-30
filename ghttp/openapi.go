@@ -1,10 +1,10 @@
 package ghttp
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 
+	"github.com/bytedance/sonic"
 	"github.com/gin-gonic/gin"
 	"github.com/lanechi/gonex/openapi"
 )
@@ -44,7 +44,7 @@ func (server *Server) openAPIInfo() openapi.Info {
 
 // OpenAPIJSON returns the generated document as indented JSON.
 func (server *Server) OpenAPIJSON() ([]byte, error) {
-	return json.MarshalIndent(server.OpenAPI(), "", "  ")
+	return sonic.MarshalIndent(server.OpenAPI(), "", "  ")
 }
 
 func (server *Server) openAPIHandler(context *gin.Context) {

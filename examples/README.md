@@ -1,7 +1,7 @@
 # gonex examples
 
 `examples` 提供四个独立 Go module；其中 `demo` 是唯一由 `gx init` 使用的项目模板，其余目录是
-可运行示例。它们既是入门示例，也是核心框架与 `gx` 生成器的跨模块契约验证，同时是
+可运行示例。它们既是入门示例，也是已发布 Gonex modules 的用法示例，同时是
 [`examples/demo/.agents/skills`](demo/.agents/skills/) 工作流引用的可运行模式。
 
 ```text
@@ -12,8 +12,9 @@ examples/
 └── template-demo/
 ```
 
-仓库没有 `go.work`。每个 example 的 `go.mod` 都通过
-`replace github.com/lanechi/gonex => ../..` 使用本地框架，必须进入各自目录运行 Go 命令。
+仓库没有 `go.work`。每个 example 都是可独立解析的 Go module，通过已发布版本依赖 Gonex；使用
+GORM 的示例也通过已发布版本依赖 `contrib/gormlog`。示例不引用仓库内的本地 module，便于直接复制或由
+`gx init` 初始化后独立运行。
 
 ## 示例选择
 

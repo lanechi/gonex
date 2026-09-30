@@ -1,10 +1,10 @@
 package ghttp
 
 import (
-	"encoding/json"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/bytedance/sonic"
 	"github.com/gin-gonic/gin"
 )
 
@@ -30,7 +30,7 @@ func TestDefaultErrorHandlerShowsDetailsOnlyInDebugMode(t *testing.T) {
 			})
 
 			var response Response
-			if err := json.Unmarshal(writer.Body.Bytes(), &response); err != nil {
+			if err := sonic.Unmarshal(writer.Body.Bytes(), &response); err != nil {
 				t.Fatal(err)
 			}
 			if response.Code != 40002 || response.Message != "request validation failed" {

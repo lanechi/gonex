@@ -8,13 +8,13 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
 	"sync"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/lanechi/gonex/internal/sessionvalue"
 )
 
@@ -378,7 +378,7 @@ func (storage *CookieStorage) EncodeWithFamily(ctx context.Context, values map[s
 	if ttl > 0 {
 		payload.ExpiresAt = time.Now().Add(ttl).Unix()
 	}
-	body, err := json.Marshal(payload)
+	body, err := sonic.Marshal(payload)
 	if err != nil {
 		return "", err
 	}

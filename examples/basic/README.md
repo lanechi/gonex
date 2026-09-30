@@ -14,8 +14,8 @@
 - 返回统一响应并自动生成 OpenAPI/Swagger。
 - 通过 `Server.Scheduler()` 注册由 Server 生命周期托管的后台任务。
 
-本目录是独立 module `github.com/lanechi/gonex/examples/basic`，通过 `go.mod` 中的本地
-`replace` 使用仓库内 gonex。
+本目录是独立 module `github.com/lanechi/gonex/examples/basic`，通过 `go.mod` 中的已发布版本依赖 gonex，
+不引用仓库内的本地 module。
 
 ## 运行
 
