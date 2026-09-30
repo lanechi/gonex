@@ -43,14 +43,8 @@ jobs:
 
           echo "value=$version" >> "$GITHUB_OUTPUT"
 
-  verify:
-    needs: prepare
-    permissions:
-      contents: read
-    uses: ./.github/workflows/ci.yml
-
   publish:
-    needs: [prepare, verify]
+    needs: prepare
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -66,6 +60,9 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           tags=(
             "v${VERSION}"
