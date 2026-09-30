@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: 1.26.7
+          go-version: 1.27.1
           cache: true
       - run: go mod tidy -diff
       - run: go test ./...
@@ -44,7 +44,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: 1.26.7
+          go-version: 1.27.1
           cache-dependency-path: gx/go.sum
       - run: go mod tidy -diff
       - run: go test ./...
@@ -70,7 +70,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: 1.26.7
+          go-version: 1.27.1
           cache: false
       - run: go mod tidy -diff
       - run: go test ./...
@@ -86,7 +86,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: 1.26.7
+          go-version: 1.27.1
           cache: true
       - name: Check compatibility with latest stable v1
         shell: bash
@@ -114,7 +114,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: 1.26.7
+          go-version: 1.27.1
           cache: true
       - name: Test core
         run: go test ./...

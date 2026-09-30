@@ -13,7 +13,7 @@ import (
 
 func TestGeneratorsCreateControllerServiceAndLogic(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.26.0\n")
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.27.0\n")
 	writeFile(t, filepath.Join(root, "api/user/v1/user.go"), `package v1
 
 import "github.com/lanechi/gonex/g"
@@ -68,7 +68,7 @@ func (*sUser) Ping(context.Context) error { return nil }
 
 func TestGeneratedAPIUsesLastDirectoryAsPackageName(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.26.0\n")
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.27.0\n")
 	project, err := gen.DiscoverProject(root)
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +107,7 @@ func TestGeneratedAPIUsesLastDirectoryAsPackageName(t *testing.T) {
 
 func TestServiceGenerationReplacesExistingServiceFile(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.26.0\n")
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.27.0\n")
 	writeFile(t, filepath.Join(root, "internal/logic/user/user.go"), `package user
 
 import "context"
@@ -151,7 +151,7 @@ func TestServiceGeneratorNormalizesModuleNames(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.module, func(t *testing.T) {
 			root := t.TempDir()
-			writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.26.0\n")
+			writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.27.0\n")
 			writeFile(t, filepath.Join(root, "internal/logic", test.module, "logic.go"), `package logic
 
 import "context"
@@ -185,7 +185,7 @@ func Ping(context.Context) error { return nil }
 
 func TestServiceGeneratorPreservesAliasedImports(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.26.0\n")
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.27.0\n")
 	writeFile(t, filepath.Join(root, "internal/logic/order/order.go"), `package order
 
 import (
@@ -233,7 +233,7 @@ func (*sRefund) Apply(context.Context, dto.CreateRequest) error { return nil }
 
 func TestGeneratorsPreserveDeveloperImplementationAndSupportDryRun(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.26.0\n")
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.27.0\n")
 	writeFile(t, filepath.Join(root, "api/user/v1/user.go"), `package v1
 
 import "github.com/lanechi/gonex/g"
@@ -260,7 +260,7 @@ type CreateRes struct{}
 	}
 
 	dryRoot := t.TempDir()
-	writeFile(t, filepath.Join(dryRoot, "go.mod"), "module example.com/dry\n\ngo 1.26.0\n")
+	writeFile(t, filepath.Join(dryRoot, "go.mod"), "module example.com/dry\n\ngo 1.27.0\n")
 	writeFile(t, filepath.Join(dryRoot, "api/user/v1/user.go"), string(mustRead(t, filepath.Join(root, "api/user/v1/user.go"))))
 	dryProject, err := gen.DiscoverProject(dryRoot)
 	if err != nil {
@@ -276,7 +276,7 @@ type CreateRes struct{}
 
 func TestControllerGeneratorInitializesAnyNamedResponseWithNew(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.26.0\n")
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.27.0\n")
 	writeFile(t, filepath.Join(root, "api/review/v1/review.go"), `package v1
 
 import "github.com/lanechi/gonex/g"

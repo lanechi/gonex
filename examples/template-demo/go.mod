@@ -1,6 +1,6 @@
 module github.com/lanechi/gonex/examples/template-demo
 
-go 1.26.0
+go 1.27.0
 
 require github.com/lanechi/gonex v0.0.0-20260822044701-98811ca3a7b9
 

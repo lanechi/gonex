@@ -82,7 +82,7 @@ type Binder struct {
 
 ## 5. Go 基础规则
 
-- 使用 Go `1.26.0`；
+- 使用 Go `1.27.0`；
 - 所有 Go 文件必须 `gofmt`；
 - 导出 API 必须有准确 GoDoc；
 - 错误用 `%w` / `errors.Join` 保留链；

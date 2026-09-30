@@ -1,6 +1,6 @@
 module github.com/lanechi/gonex/contrib/gormlog
 
-go 1.26.0
+go 1.27.0
 
 require (
 	github.com/lanechi/gonex v0.1.4
