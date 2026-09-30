@@ -29,7 +29,7 @@ func (SQLServerMapper) Map(column Column) (string, bool) {
 		case "date", "time", "datetime", "datetime2", "smalldatetime", "datetimeoffset":
 			return "time.Time", true
 		case "uniqueidentifier":
-			return "uuid.UUID", true
+			return "datatypes.UUID", true
 		case "xml":
 			return "string", true
 		case "hierarchyid", "sql_variant":

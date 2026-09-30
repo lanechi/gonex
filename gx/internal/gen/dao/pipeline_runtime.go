@@ -172,7 +172,7 @@ func commit(staged *Staged) error {
 		return fmt.Errorf("staged DAO product is required")
 	}
 	discovery := staged.Validated.Formatted.Rendered.Generated.Discovery
-	if err := ensureModelDependencies(discovery.Project, &staged.Result); err != nil {
+	if err := ensureModelDependencies(discovery.Project, &staged.Result, discovery.Config.Driver); err != nil {
 		return err
 	}
 	tidy := discovery.Options.runTidy

@@ -12,7 +12,7 @@ func (SQLiteMapper) Map(column Column) (string, bool) {
 		upper := strings.ToUpper(value)
 		switch {
 		case strings.TrimSpace(upper) == "UUID":
-			return "uuid.UUID", true
+			return "datatypes.UUID", true
 		case strings.Contains(upper, "BOOLEAN"), strings.Contains(upper, "BOOL"):
 			return "bool", true
 		case strings.Contains(upper, "DATE"), strings.Contains(upper, "DATETIME"), strings.Contains(upper, "TIMESTAMP"):

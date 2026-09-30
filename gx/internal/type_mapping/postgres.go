@@ -2,24 +2,29 @@ package typemapping
 
 import "strings"
 
-// PostgresMapper maps PostgreSQL native, alias, and array types.
+// PostgresMapper maps PostgreSQL built-in, alias, and array types to existing
+// Go, GORM, and pgx types that can be used directly by GORM.
 type PostgresMapper struct{}
 
 func (PostgresMapper) Map(column Column) (string, bool) {
 	for _, candidate := range typeCandidates(column) {
 		if element, ok := arrayElementType(candidate); ok {
-			if mapped, known := postgresScalarType(element); known {
-				return "[]" + mapped, true
+			mapped, known := postgresScalarType(element)
+			if !known {
+				return "", false
 			}
-			return "[]string", true
+			return "[]" + mapped, true
 		}
 		if strings.HasPrefix(baseType(candidate), "array") {
-			if element, ok := arrayElementType(column.ColumnType); ok {
-				if mapped, known := postgresScalarType(element); known {
-					return "[]" + mapped, true
-				}
-				return "[]string", true
+			element, ok := arrayElementType(column.ColumnType)
+			if !ok {
+				return "", false
 			}
+			mapped, known := postgresScalarType(element)
+			if !known {
+				return "", false
+			}
+			return "[]" + mapped, true
 		}
 		if mapped, ok := postgresScalarType(candidate); ok {
 			return mapped, true
@@ -40,32 +45,85 @@ func postgresScalarType(value string) (string, bool) {
 		return "float32", true
 	case "double", "float8":
 		return "float64", true
-	case "numeric", "decimal", "money":
+	case "numeric", "decimal":
 		return "decimal.Decimal", true
+	case "money":
+		// PostgreSQL money has locale-sensitive text formatting. Keep the exact
+		// database representation instead of pretending it is a plain decimal.
+		return "string", true
 	case "bool", "boolean":
 		return "bool", true
-	case "char", "bpchar", "character", "varchar", "character varying", "text", "citext":
+	case "char", "bpchar", "character", "varchar", "character varying", "text", "citext", "name":
 		return "string", true
 	case "uuid":
-		return "uuid.UUID", true
+		return "datatypes.UUID", true
 	case "json", "jsonb":
 		return "datatypes.JSON", true
 	case "bytea":
 		return "[]byte", true
-	case "date", "time", "timetz", "timestamp", "timestamptz", "timestampz":
+	case "date":
+		return "datatypes.Date", true
+	case "time":
+		// pgtype.Time preserves PostgreSQL's valid 24:00:00 value.
+		return "pgtype.Time", true
+	case "timetz":
+		// pgx intentionally does not provide a timetz value type because
+		// PostgreSQL itself discourages time with time zone.
+		return "string", true
+	case "timestamp", "timestamptz", "timestampz":
 		return "time.Time", true
 	case "interval":
-		return "time.Duration", true
-	case "tsvector", "tsquery", "xml", "jsonpath", "pg_lsn", "hstore", "ltree":
+		return "pgtype.Interval", true
+	case "point":
+		return "pgtype.Point", true
+	case "line":
+		return "pgtype.Line", true
+	case "lseg":
+		return "pgtype.Lseg", true
+	case "box":
+		return "pgtype.Box", true
+	case "path":
+		return "pgtype.Path", true
+	case "polygon":
+		return "pgtype.Polygon", true
+	case "circle":
+		return "pgtype.Circle", true
+	case "bit", "varbit":
+		return "pgtype.Bits", true
+	case "inet":
+		return "netip.Addr", true
+	case "cidr":
+		return "netip.Prefix", true
+	case "macaddr", "macaddr8":
+		return "net.HardwareAddr", true
+	case "hstore":
+		return "pgtype.Hstore", true
+	case "tsvector":
+		return "pgtype.TSVector", true
+	case "tsquery", "xml", "jsonpath", "pg_lsn", "ltree":
 		return "string", true
+	case "tid":
+		return "pgtype.TID", true
 	case "oid", "xid", "cid", "regclass", "regcollation", "regconfig", "regdictionary", "regnamespace", "regoper", "regoperator", "regproc", "regprocedure", "regrole", "regtype":
 		return "uint32", true
 	case "xid8":
 		return "uint64", true
-	case "inet", "cidr", "macaddr", "macaddr8":
-		return "string", true
-	case "bit", "varbit":
-		return "[]byte", true
+	case "int4range":
+		return "pgtype.Range[int32]", true
+	case "int8range":
+		return "pgtype.Range[int64]", true
+	case "numrange":
+		return "pgtype.Range[pgtype.Numeric]", true
+	case "daterange", "tsrange", "tstzrange":
+		return "pgtype.Range[time.Time]", true
+	case "int4multirange":
+		return "pgtype.Multirange[pgtype.Range[int32]]", true
+	case "int8multirange":
+		return "pgtype.Multirange[pgtype.Range[int64]]", true
+	case "nummultirange":
+		return "pgtype.Multirange[pgtype.Range[pgtype.Numeric]]", true
+	case "datemultirange", "tsmultirange", "tstzmultirange":
+		return "pgtype.Multirange[pgtype.Range[time.Time]]", true
 	default:
 		return "", false
 	}

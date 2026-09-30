@@ -10,11 +10,12 @@ import (
 	"time"
 
 	"golang.org/x/mod/modfile"
+	"golang.org/x/mod/semver"
 )
 
 const goModTidyTimeout = 2 * time.Minute
 
-func ensureModelDependencies(project Project, result *Result) error {
+func ensureModelDependencies(project Project, result *Result, driver string) error {
 	path := project.Resolve("go.mod")
 	content, err := os.ReadFile(path)
 	if err != nil {
@@ -24,18 +25,29 @@ func ensureModelDependencies(project Project, result *Result) error {
 	if err != nil {
 		return fmt.Errorf("parse project go.mod: %w", err)
 	}
-	for _, dependency := range []struct {
+
+	dependencies := []struct {
 		path    string
 		version string
 	}{
 		{path: "gorm.io/gen", version: "v0.3.28"},
 		{path: "gorm.io/plugin/dbresolver", version: "v1.6.2"},
-		{path: "github.com/google/uuid", version: "v1.6.0"},
 		{path: "github.com/shopspring/decimal", version: "v1.4.0"},
 		{path: "gorm.io/datatypes", version: "v1.2.4"},
-	} {
-		file.AddRequire(dependency.path, dependency.version)
 	}
+	if isPostgresDriver(driver) {
+		// pgx 5.11 is the first release that uses Go 1.27's
+		// driver.RowsColumnScanner support. GORM's database/sql path can then
+		// scan PostgreSQL arrays and ranges directly into generated Go values.
+		dependencies = append(dependencies, struct {
+			path    string
+			version string
+		}{path: "github.com/jackc/pgx/v5", version: "v5.11.0"})
+	}
+	for _, dependency := range dependencies {
+		addMinimumRequire(file, dependency.path, dependency.version)
+	}
+
 	updated, err := file.Format()
 	if err != nil {
 		return fmt.Errorf("format project go.mod: %w", err)
@@ -48,6 +60,19 @@ func ensureModelDependencies(project Project, result *Result) error {
 	}
 	result.Add("UPDATE", "go.mod", "added GORM model generation dependencies")
 	return nil
+}
+
+func addMinimumRequire(file *modfile.File, path, minimum string) {
+	for _, requirement := range file.Require {
+		if requirement.Mod.Path != path {
+			continue
+		}
+		if semver.Compare(requirement.Mod.Version, minimum) >= 0 {
+			return
+		}
+		break
+	}
+	file.AddRequire(path, minimum)
 }
 
 func runGoModTidy(projectRoot string) error {

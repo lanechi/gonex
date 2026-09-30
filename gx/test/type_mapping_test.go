@@ -2,6 +2,7 @@ package test
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -40,13 +41,28 @@ func TestTypeMappingAcrossDatabases(t *testing.T) {
 		column typemapping.Column
 		want   string
 	}{
-		{"postgres uuid", typemapping.DatabasePostgres, typemapping.Column{DataType: "uuid", Nullable: true}, "*uuid.UUID"},
+		{"postgres uuid", typemapping.DatabasePostgres, typemapping.Column{DataType: "uuid", Nullable: true}, "*datatypes.UUID"},
 		{"postgres jsonb", typemapping.DatabasePostgres, typemapping.Column{DataType: "jsonb"}, "datatypes.JSON"},
+		{"postgres date", typemapping.DatabasePostgres, typemapping.Column{DataType: "date", Nullable: true}, "*datatypes.Date"},
+		{"postgres time", typemapping.DatabasePostgres, typemapping.Column{DataType: "time", Nullable: true}, "pgtype.Time"},
+		{"postgres interval", typemapping.DatabasePostgres, typemapping.Column{DataType: "interval", Nullable: true}, "pgtype.Interval"},
+		{"postgres inet", typemapping.DatabasePostgres, typemapping.Column{DataType: "inet", Nullable: true}, "*netip.Addr"},
+		{"postgres cidr", typemapping.DatabasePostgres, typemapping.Column{DataType: "cidr"}, "netip.Prefix"},
+		{"postgres macaddr", typemapping.DatabasePostgres, typemapping.Column{DataType: "macaddr"}, "net.HardwareAddr"},
+		{"postgres bits", typemapping.DatabasePostgres, typemapping.Column{DataType: "varbit", Nullable: true}, "pgtype.Bits"},
+		{"postgres point", typemapping.DatabasePostgres, typemapping.Column{DataType: "point"}, "pgtype.Point"},
+		{"postgres hstore", typemapping.DatabasePostgres, typemapping.Column{DataType: "hstore"}, "pgtype.Hstore"},
+		{"postgres tsvector", typemapping.DatabasePostgres, typemapping.Column{DataType: "tsvector"}, "pgtype.TSVector"},
+		{"postgres int4 range", typemapping.DatabasePostgres, typemapping.Column{DataType: "int4range"}, "pgtype.Range[int32]"},
+		{"postgres numeric multirange", typemapping.DatabasePostgres, typemapping.Column{DataType: "nummultirange"}, "pgtype.Multirange[pgtype.Range[pgtype.Numeric]]"},
+		{"postgres money", typemapping.DatabasePostgres, typemapping.Column{DataType: "money"}, "string"},
+		{"postgres timetz", typemapping.DatabasePostgres, typemapping.Column{DataType: "timetz"}, "string"},
 		{"mysql bool", typemapping.DatabaseMySQL, typemapping.Column{DataType: "tinyint", ColumnType: "tinyint(1)"}, "bool"},
 		{"mysql decimal", typemapping.DatabaseMySQL, typemapping.Column{DataType: "decimal", ColumnType: "decimal(20,8)"}, "decimal.Decimal"},
 		{"sqlite integer", typemapping.DatabaseSQLite, typemapping.Column{DataType: "BIGINT"}, "int64"},
 		{"sqlite json", typemapping.DatabaseSQLite, typemapping.Column{DataType: "JSON"}, "datatypes.JSON"},
-		{"sqlserver uuid", typemapping.DatabaseSQLServer, typemapping.Column{DataType: "uniqueidentifier"}, "uuid.UUID"},
+		{"sqlite uuid", typemapping.DatabaseSQLite, typemapping.Column{DataType: "UUID"}, "datatypes.UUID"},
+		{"sqlserver uuid", typemapping.DatabaseSQLServer, typemapping.Column{DataType: "uniqueidentifier"}, "datatypes.UUID"},
 		{"sqlserver max", typemapping.DatabaseSQLServer, typemapping.Column{DataType: "nvarchar", ColumnType: "nvarchar(max)"}, "string"},
 	}
 	for _, test := range tests {
@@ -58,12 +74,65 @@ func TestTypeMappingAcrossDatabases(t *testing.T) {
 	}
 }
 
+func TestPostgresArrayMappingUsesNativeSlices(t *testing.T) {
+	tests := []struct {
+		dataType string
+		want     string
+	}{
+		{"text[]", "[]string"},
+		{"bigint[]", "[]int64"},
+		{"uuid[]", "[]datatypes.UUID"},
+		{"bytea[]", "[][]byte"},
+		{"interval[]", "[]pgtype.Interval"},
+		{"int4range[]", "[]pgtype.Range[int32]"},
+		{"_float8", "[]float64"},
+	}
+	for _, test := range tests {
+		t.Run(test.dataType, func(t *testing.T) {
+			got := typemapping.MapFieldType(typemapping.DatabasePostgres, typemapping.Column{
+				DataType: test.dataType,
+				Nullable: true,
+			})
+			if got != test.want {
+				t.Fatalf("MapFieldType(%q) = %q, want %q", test.dataType, got, test.want)
+			}
+		})
+	}
+}
+
 func TestTypeMappingPreservesNullableCollectionValues(t *testing.T) {
 	if got := typemapping.MapFieldType(typemapping.DatabasePostgres, typemapping.Column{DataType: "text[]", Nullable: true}); got != "[]string" {
 		t.Fatalf("nullable text array = %q, want []string", got)
 	}
 	if got := typemapping.MapFieldType(typemapping.DatabasePostgres, typemapping.Column{DataType: "bigint", Nullable: true}); got != "*int64" {
 		t.Fatalf("nullable bigint = %q, want *int64", got)
+	}
+	if got := typemapping.MapFieldType(typemapping.DatabasePostgres, typemapping.Column{DataType: "interval", Nullable: true}); got != "pgtype.Interval" {
+		t.Fatalf("nullable interval = %q, want pgtype.Interval", got)
+	}
+}
+
+func TestTypeMappingCollectsExternalImports(t *testing.T) {
+	mapping := typemapping.BuildDataTypeMap(typemapping.DatabasePostgres, []typemapping.TableColumns{{
+		Table: "all_types",
+		Columns: []gorm.ColumnType{
+			testColumnType{name: "uuid", databaseType: "uuid", columnType: "uuid"},
+			testColumnType{name: "amount", databaseType: "numeric", columnType: "numeric(20,8)"},
+			testColumnType{name: "duration", databaseType: "interval", columnType: "interval"},
+			testColumnType{name: "ip", databaseType: "inet", columnType: "inet"},
+			testColumnType{name: "mac", databaseType: "macaddr", columnType: "macaddr"},
+		},
+	}})
+	for _, want := range []string{
+		"github.com/jackc/pgx/v5/pgtype",
+		"github.com/shopspring/decimal",
+		"gorm.io/datatypes",
+		"net",
+		"net/netip",
+	} {
+		if !slices.Contains(mapping.Imports, want) {
+			t.Fatalf("imports = %#v, missing %q", mapping.Imports, want)
+		}
 	}
 }
 

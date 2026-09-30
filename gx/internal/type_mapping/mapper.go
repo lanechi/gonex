@@ -185,15 +185,21 @@ func normalizeDriver(driver DatabaseType) DatabaseType {
 }
 
 func importsForType(fieldType string) []string {
-	imports := make([]string, 0, 3)
-	if strings.Contains(fieldType, "uuid.UUID") {
-		imports = append(imports, "github.com/google/uuid")
-	}
+	imports := make([]string, 0, 5)
 	if strings.Contains(fieldType, "decimal.Decimal") {
 		imports = append(imports, "github.com/shopspring/decimal")
 	}
-	if strings.Contains(fieldType, "datatypes.JSON") {
+	if strings.Contains(fieldType, "pgtype.") {
+		imports = append(imports, "github.com/jackc/pgx/v5/pgtype")
+	}
+	if strings.Contains(fieldType, "datatypes.") {
 		imports = append(imports, "gorm.io/datatypes")
+	}
+	if strings.Contains(fieldType, "netip.") {
+		imports = append(imports, "net/netip")
+	}
+	if strings.Contains(fieldType, "net.HardwareAddr") {
+		imports = append(imports, "net")
 	}
 	return imports
 }

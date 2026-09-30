@@ -207,6 +207,21 @@ internal/dao/**/*.gen.go
 internal/model/entity/**/*.gen.go
 ```
 
+PostgreSQL 类型生成以“直接使用成熟实现”为原则，不在 gonex 中复制数据库值类型。Go 1.27 项目通过
+pgx 5.11+ 的 `database/sql` 类型扫描能力直接使用原生 slice 和 pgx 类型；`gx dao` 会为 PostgreSQL
+项目保证 `github.com/jackc/pgx/v5 >= v5.11.0`，已有更高版本不会被降级。典型映射包括：
+
+```text
+text[] / bigint[]       -> []string / []int64
+uuid                    -> datatypes.UUID
+json / jsonb            -> datatypes.JSON
+numeric / decimal       -> decimal.Decimal
+interval                -> pgtype.Interval
+inet / cidr             -> netip.Addr / netip.Prefix
+point / line / polygon  -> pgtype 对应几何类型
+range / multirange      -> pgtype.Range / pgtype.Multirange
+```
+
 `gx dao` 会先在 module 内的临时目录生成、修复数据库注释可能造成的非法 struct tag，并校验全部
 Go 文件；验证通过后才成对替换 DAO/Entity。依赖整理使用 `go mod tidy -e`，因此项目中无关包暂时存在
 编译或加载错误时仍可完成生成；生成输入、生成文件、`go.mod` 本身或其它不可恢复错误不会被忽略。后续依赖更新或整理失败时，旧生成目录、
