@@ -76,14 +76,14 @@ func TestEnsureModelDependenciesRequiresPGX511ForPostgres(t *testing.T) {
 }
 
 func TestAddMinimumRequireDoesNotDowngrade(t *testing.T) {
-	file, err := modfile.Parse("go.mod", []byte("module example.com/app\n\ngo 1.27.0\n\nrequire example.com/dependency v2.3.0\n"), nil)
+	file, err := modfile.Parse("go.mod", []byte("module example.com/app\n\ngo 1.27.0\n\nrequire example.com/dependency v1.3.0\n"), nil)
 	if err != nil {
 		t.Fatalf("parse go.mod: %v", err)
 	}
-	addMinimumRequire(file, "example.com/dependency", "v2.2.0")
+	addMinimumRequire(file, "example.com/dependency", "v1.2.0")
 	for _, requirement := range file.Require {
 		if requirement.Mod.Path == "example.com/dependency" {
-			if requirement.Mod.Version != "v2.3.0" {
+			if requirement.Mod.Version != "v1.3.0" {
 				t.Fatalf("dependency was downgraded to %q", requirement.Mod.Version)
 			}
 			return
