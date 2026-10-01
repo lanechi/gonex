@@ -214,12 +214,22 @@ internal/dao/**/*.gen.go
 internal/model/entity/**/*.gen.go
 ```
 
-PostgreSQL 类型生成以“直接使用成熟实现”为原则，不在 gonex 中复制数据库值类型。Go 1.27 项目通过
-pgx 5.11+ 的 `database/sql` 类型扫描能力直接使用原生 slice 和 pgx 类型；`gx dao` 会为 PostgreSQL
-项目保证 `github.com/jackc/pgx/v5 >= v5.11.0`，已有更高版本不会被降级。典型映射包括：
+PostgreSQL 类型生成优先使用成熟实现，不在 gonex 中复制数据库值类型。Go 1.27 项目通过 pgx
+5.11+ 的 `database/sql` 类型扫描能力使用 pgx 类型；对于 `lib/pq` 已提供专用
+`Scanner`/`Valuer` 的 PostgreSQL 数组，gx 生成对应的数组类型，并在生成代码使用时保留
+`github.com/lib/pq` 依赖。未被 `lib/pq` 覆盖的数组继续沿用现有映射。PostgreSQL 项目仍会确保
+`github.com/jackc/pgx/v5 >= v5.11.0`，已有更高版本不会被降级。典型映射包括：
 
 ```text
-text[] / bigint[]       -> []string / []int64
+boolean[]               -> pq.BoolArray
+integer[] / int4[]      -> pq.Int32Array
+bigint[] / int8[]       -> pq.Int64Array
+real[] / float4[]       -> pq.Float32Array
+double precision[]      -> pq.Float64Array
+text[] / varchar[]      -> pq.StringArray
+bytea[]                 -> pq.ByteaArray
+smallint[]              -> []int16
+uuid[] / numeric[]      -> 保持现有映射
 uuid                    -> datatypes.UUID
 json / jsonb            -> datatypes.JSON
 numeric / decimal       -> decimal.Decimal

@@ -2,35 +2,52 @@ package typemapping
 
 import "strings"
 
-// PostgresMapper maps PostgreSQL built-in, alias, and array types to existing
-// Go, GORM, and pgx types that can be used directly by GORM.
+// PostgresMapper maps PostgreSQL built-in, alias, and array types to Go,
+// GORM, pgx, and lib/pq types that can be used directly by GORM.
 type PostgresMapper struct{}
 
 func (PostgresMapper) Map(column Column) (string, bool) {
 	for _, candidate := range typeCandidates(column) {
 		if element, ok := arrayElementType(candidate); ok {
-			mapped, known := postgresScalarType(element)
-			if !known {
-				return "", false
-			}
-			return "[]" + mapped, true
+			return postgresArrayType(element)
 		}
 		if strings.HasPrefix(baseType(candidate), "array") {
 			element, ok := arrayElementType(column.ColumnType)
 			if !ok {
 				return "", false
 			}
-			mapped, known := postgresScalarType(element)
-			if !known {
-				return "", false
-			}
-			return "[]" + mapped, true
+			return postgresArrayType(element)
 		}
 		if mapped, ok := postgresScalarType(candidate); ok {
 			return mapped, true
 		}
 	}
 	return "", false
+}
+
+func postgresArrayType(value string) (string, bool) {
+	switch baseType(value) {
+	case "bool", "boolean":
+		return "pq.BoolArray", true
+	case "int4", "integer", "serial", "serial4":
+		return "pq.Int32Array", true
+	case "int8", "bigint", "bigserial", "serial8":
+		return "pq.Int64Array", true
+	case "real", "float4":
+		return "pq.Float32Array", true
+	case "double", "float8":
+		return "pq.Float64Array", true
+	case "char", "bpchar", "character", "varchar", "text", "citext", "name":
+		return "pq.StringArray", true
+	case "bytea":
+		return "pq.ByteaArray", true
+	default:
+		mapped, known := postgresScalarType(value)
+		if !known {
+			return "", false
+		}
+		return "[]" + mapped, true
+	}
 }
 
 func postgresScalarType(value string) (string, bool) {

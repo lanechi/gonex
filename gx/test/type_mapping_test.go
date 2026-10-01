@@ -74,18 +74,18 @@ func TestTypeMappingAcrossDatabases(t *testing.T) {
 	}
 }
 
-func TestPostgresArrayMappingUsesNativeSlices(t *testing.T) {
+func TestPostgresArrayMappingUsesDedicatedTypesWhenAvailable(t *testing.T) {
 	tests := []struct {
 		dataType string
 		want     string
 	}{
-		{"text[]", "[]string"},
-		{"bigint[]", "[]int64"},
+		{"text[]", "pq.StringArray"},
+		{"bigint[]", "pq.Int64Array"},
 		{"uuid[]", "[]datatypes.UUID"},
-		{"bytea[]", "[][]byte"},
+		{"bytea[]", "pq.ByteaArray"},
 		{"interval[]", "[]pgtype.Interval"},
 		{"int4range[]", "[]pgtype.Range[int32]"},
-		{"_float8", "[]float64"},
+		{"_float8", "pq.Float64Array"},
 	}
 	for _, test := range tests {
 		t.Run(test.dataType, func(t *testing.T) {
@@ -101,8 +101,8 @@ func TestPostgresArrayMappingUsesNativeSlices(t *testing.T) {
 }
 
 func TestTypeMappingPreservesNullableCollectionValues(t *testing.T) {
-	if got := typemapping.MapFieldType(typemapping.DatabasePostgres, typemapping.Column{DataType: "text[]", Nullable: true}); got != "[]string" {
-		t.Fatalf("nullable text array = %q, want []string", got)
+	if got := typemapping.MapFieldType(typemapping.DatabasePostgres, typemapping.Column{DataType: "text[]", Nullable: true}); got != "pq.StringArray" {
+		t.Fatalf("nullable text array = %q, want pq.StringArray", got)
 	}
 	if got := typemapping.MapFieldType(typemapping.DatabasePostgres, typemapping.Column{DataType: "bigint", Nullable: true}); got != "*int64" {
 		t.Fatalf("nullable bigint = %q, want *int64", got)

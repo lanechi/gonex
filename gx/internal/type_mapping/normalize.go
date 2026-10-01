@@ -83,5 +83,6 @@ func arrayElementType(value string) (string, bool) {
 func noPointerType(value string) bool {
 	return strings.HasPrefix(value, "[]") ||
 		value == "datatypes.JSON" ||
-		strings.HasPrefix(value, "pgtype.")
+		strings.HasPrefix(value, "pgtype.") ||
+		strings.HasPrefix(value, "pq.")
 }

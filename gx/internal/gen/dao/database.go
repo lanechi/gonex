@@ -86,7 +86,8 @@ func stripNullableCollectionType(field gen.Field) gen.Field {
 	}
 	if strings.HasPrefix(field.Type, "*[]") ||
 		field.Type == "*datatypes.JSON" ||
-		strings.HasPrefix(field.Type, "*pgtype.") {
+		strings.HasPrefix(field.Type, "*pgtype.") ||
+		strings.HasPrefix(field.Type, "*pq.") {
 		field.Type = strings.TrimPrefix(field.Type, "*")
 	}
 	return field

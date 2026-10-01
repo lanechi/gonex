@@ -192,6 +192,9 @@ func importsForType(fieldType string) []string {
 	if strings.Contains(fieldType, "pgtype.") {
 		imports = append(imports, "github.com/jackc/pgx/v5/pgtype")
 	}
+	if strings.Contains(fieldType, "pq.") {
+		imports = append(imports, "github.com/lib/pq")
+	}
 	if strings.Contains(fieldType, "datatypes.") {
 		imports = append(imports, "gorm.io/datatypes")
 	}

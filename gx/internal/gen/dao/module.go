@@ -43,6 +43,10 @@ func ensureModelDependencies(project Project, result *Result, driver string) err
 			path    string
 			version string
 		}{path: "github.com/jackc/pgx/v5", version: "v5.11.0"})
+		dependencies = append(dependencies, struct {
+			path    string
+			version string
+		}{path: "github.com/lib/pq", version: "v1.10.9"})
 	}
 	for _, dependency := range dependencies {
 		addMinimumRequire(file, dependency.path, dependency.version)
