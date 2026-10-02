@@ -68,11 +68,33 @@ func buildTypeMapping(
 		if err != nil {
 			return typemapping.Mapping{}, fmt.Errorf("read columns for table %s: %w", tableName, err)
 		}
+		mappedColumns := make([]typemapping.Column, 0, len(columns))
+		for _, column := range columns {
+			mappedColumns = append(mappedColumns, typemapping.ColumnFromGORM(tableName, column))
+		}
 		introspected = append(introspected, typemapping.TableColumns{
-			Table: tableName,
-			Columns: columns,
+			Table:   tableName,
+			Columns: mappedColumns,
 		})
 	}
+
+	if isPostgresDriver(string(driver)) {
+		postgresTypes, err := loadPostgresColumnTypes(database, tableNames)
+		if err != nil {
+			return typemapping.Mapping{}, err
+		}
+		for tableIndex := range introspected {
+			for columnIndex := range introspected[tableIndex].Columns {
+				column := &introspected[tableIndex].Columns[columnIndex]
+				postgresType, ok := postgresTypes[postgresColumnTypeKey(column.TableName, column.Name)]
+				if !ok {
+					continue
+				}
+				column.Postgres = &postgresType
+			}
+		}
+	}
+
 	mapping := typemapping.BuildDataTypeMap(driver, introspected)
 	for _, warning := range mapping.Warnings {
 		fmt.Fprintf(os.Stderr, "WARN %s\n", warning.String())
@@ -126,6 +148,77 @@ func generateModels(database *gorm.DB, outputRoot, modelRoot string, tables []st
 	}
 	generator.ApplyBasic(models...)
 	return executeModelGenerator(generator)
+}
+
+type postgresColumnTypeRow struct {
+	TableSchema     string `gorm:"column:table_schema"`
+	TableName       string `gorm:"column:table_name"`
+	ColumnName      string `gorm:"column:column_name"`
+	TypeOID         uint32 `gorm:"column:type_oid"`
+	TypeName        string `gorm:"column:type_name"`
+	ElementOID      uint32 `gorm:"column:element_oid"`
+	ElementTypeName string `gorm:"column:element_type_name"`
+}
+
+func loadPostgresColumnTypes(database *gorm.DB, tableNames []string) (map[string]typemapping.PostgresType, error) {
+	if len(tableNames) == 0 {
+		return map[string]typemapping.PostgresType{}, nil
+	}
+
+	conditions := make([]string, 0, len(tableNames))
+	arguments := make([]any, 0, len(tableNames)*2)
+	for _, tableName := range tableNames {
+		schemaName, relationName := splitPostgresTableReference(tableName)
+		if schemaName == "" || relationName == "" {
+			return nil, fmt.Errorf("PostgreSQL catalog lookup requires a schema-qualified table: %q", tableName)
+		}
+		conditions = append(conditions, "(namespace.nspname = ? AND relation.relname = ?)")
+		arguments = append(arguments, schemaName, relationName)
+	}
+
+	query := `
+		SELECT
+			namespace.nspname AS table_schema,
+			relation.relname AS table_name,
+			attribute.attname AS column_name,
+			type.oid::bigint AS type_oid,
+			type.typname AS type_name,
+			type.typelem::bigint AS element_oid,
+			COALESCE(element_type.typname, '') AS element_type_name
+		FROM pg_catalog.pg_attribute AS attribute
+		JOIN pg_catalog.pg_class AS relation
+			ON relation.oid = attribute.attrelid
+		JOIN pg_catalog.pg_namespace AS namespace
+			ON namespace.oid = relation.relnamespace
+		JOIN pg_catalog.pg_type AS type
+			ON type.oid = attribute.atttypid
+		LEFT JOIN pg_catalog.pg_type AS element_type
+			ON element_type.oid = type.typelem
+		WHERE attribute.attnum > 0
+		  AND NOT attribute.attisdropped
+		  AND (` + strings.Join(conditions, " OR ") + `)
+		ORDER BY namespace.nspname, relation.relname, attribute.attnum
+	`
+
+	var rows []postgresColumnTypeRow
+	if err := database.Raw(query, arguments...).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("read PostgreSQL type catalog: %w", err)
+	}
+
+	result := make(map[string]typemapping.PostgresType, len(rows))
+	for _, row := range rows {
+		result[postgresColumnTypeKey(row.TableSchema+"."+row.TableName, row.ColumnName)] = typemapping.PostgresType{
+			OID:         row.TypeOID,
+			Name:        row.TypeName,
+			ElementOID:  row.ElementOID,
+			ElementName: row.ElementTypeName,
+		}
+	}
+	return result, nil
+}
+
+func postgresColumnTypeKey(tableName, columnName string) string {
+	return tableName + "\x00" + columnName
 }
 
 type postgresTable struct {
