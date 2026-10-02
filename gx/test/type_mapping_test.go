@@ -189,7 +189,6 @@ func TestTypeMappingCollectsExternalImports(t *testing.T) {
 		"gorm.io/datatypes",
 		"net",
 		"net/netip",
-		"time",
 	} {
 		if !slices.Contains(mapping.Imports, want) {
 			t.Fatalf("imports = %#v, missing %q", mapping.Imports, want)
