@@ -197,6 +197,25 @@ func TestTypeMappingCollectsExternalImports(t *testing.T) {
 	}
 }
 
+func TestTypeMappingKeepsScalarHooksColumnSensitive(t *testing.T) {
+	mapping := typemapping.BuildDataTypeMap(typemapping.DatabaseMySQL, []typemapping.TableColumns{{
+		Table: "values",
+		Columns: []typemapping.Column{
+			{Name: "enabled", DataType: "tinyint", ColumnType: "tinyint(1)"},
+		},
+	}})
+	hook := mapping.TypeMap["tinyint"]
+	if hook == nil {
+		t.Fatal("missing tinyint type hook")
+	}
+	if got := hook(testColumnType{databaseType: "tinyint", columnType: "tinyint(1)"}); got != "bool" {
+		t.Fatalf("tinyint(1) = %q, want bool", got)
+	}
+	if got := hook(testColumnType{databaseType: "tinyint", columnType: "tinyint(4)"}); got != "int8" {
+		t.Fatalf("tinyint(4) = %q, want int8", got)
+	}
+}
+
 func TestTypeMappingBuildsWarningsAndColumnMetadata(t *testing.T) {
 	mapping := typemapping.BuildDataTypeMap(typemapping.DatabasePostgres, []typemapping.TableColumns{{
 		Table: "users",
