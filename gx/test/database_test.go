@@ -2,6 +2,7 @@ package test
 
 import (
 	"fmt"
+	"reflect"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/lanechi/gonex/gx/internal/gen"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
@@ -85,6 +87,10 @@ func TestDatabaseModelGeneration(t *testing.T) {
 				t.Fatal("model generation returned no changes")
 			}
 			assertGeneratedModelFiles(t, root)
+			if driver == "postgres" {
+				assertPostgresGeneratedArrayTypes(t, root)
+				verifyPostgresArrayCRUD(t, database, table)
+			}
 		})
 	}
 }
@@ -210,10 +216,129 @@ func prepareMySQLDatabase(configuration gen.DatabaseConfig) (gen.DatabaseConfig,
 
 func createTestTable(database *gorm.DB, driver, table string) error {
 	statement := `CREATE TABLE ` + table + ` (id BIGINT PRIMARY KEY, name VARCHAR(255) NOT NULL, active BOOLEAN NOT NULL)`
-	if driver == "sqlite" {
+	switch driver {
+	case "sqlite":
 		statement = `CREATE TABLE ` + table + ` (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, active BOOLEAN NOT NULL)`
+	case "postgres":
+		statement = `CREATE TABLE ` + table + ` (
+			id BIGINT PRIMARY KEY,
+			name VARCHAR(255) NOT NULL,
+			active BOOLEAN NOT NULL,
+			tags TEXT[],
+			related_ids BIGINT[],
+			flags BOOLEAN[],
+			weights DOUBLE PRECISION[]
+		)`
 	}
 	return database.Exec(statement).Error
+}
+
+type postgresArrayCRUDRow struct {
+	ID         int64                 `gorm:"column:id;primaryKey"`
+	Name       string                `gorm:"column:name"`
+	Active     bool                  `gorm:"column:active"`
+	Tags       pgtype.Array[string]  `gorm:"column:tags;type:text[]"`
+	RelatedIDs pgtype.Array[int64]   `gorm:"column:related_ids;type:bigint[]"`
+	Flags      pgtype.Array[bool]    `gorm:"column:flags;type:boolean[]"`
+	Weights    pgtype.Array[float64] `gorm:"column:weights;type:double precision[]"`
+}
+
+func testPostgresArray[T any](values ...T) pgtype.Array[T] {
+	return pgtype.Array[T]{
+		Elements: values,
+		Dims:     []pgtype.ArrayDimension{{Length: int32(len(values)), LowerBound: 1}},
+		Valid:    true,
+	}
+}
+
+func verifyPostgresArrayCRUD(t *testing.T, database *gorm.DB, table string) {
+	t.Helper()
+	row := postgresArrayCRUDRow{
+		ID:         1,
+		Name:       "native arrays",
+		Active:     true,
+		Tags:       testPostgresArray("protest", "labor"),
+		RelatedIDs: testPostgresArray[int64](11, 22),
+		Flags:      testPostgresArray(true, false),
+		Weights:    testPostgresArray(1.5, 2.5),
+	}
+	if err := database.Table(table).Create(&row).Error; err != nil {
+		t.Fatalf("create PostgreSQL array row: %v", err)
+	}
+
+	var got postgresArrayCRUDRow
+	if err := database.Table(table).Where("id = ?", row.ID).Take(&got).Error; err != nil {
+		t.Fatalf("read PostgreSQL array row: %v", err)
+	}
+	if !reflect.DeepEqual(got.Tags.Elements, row.Tags.Elements) ||
+		!reflect.DeepEqual(got.RelatedIDs.Elements, row.RelatedIDs.Elements) ||
+		!reflect.DeepEqual(got.Flags.Elements, row.Flags.Elements) ||
+		!reflect.DeepEqual(got.Weights.Elements, row.Weights.Elements) {
+		t.Fatalf("PostgreSQL array round trip mismatch: got=%#v want=%#v", got, row)
+	}
+
+	updatedTags := testPostgresArray("updated", "gorm")
+	updatedIDs := testPostgresArray[int64](33, 44, 55)
+	if err := database.Table(table).Where("id = ?", row.ID).Updates(map[string]any{
+		"tags":        updatedTags,
+		"related_ids": updatedIDs,
+	}).Error; err != nil {
+		t.Fatalf("update PostgreSQL arrays: %v", err)
+	}
+	if err := database.Table(table).Where("id = ?", row.ID).Take(&got).Error; err != nil {
+		t.Fatalf("read updated PostgreSQL array row: %v", err)
+	}
+	if !reflect.DeepEqual(got.Tags.Elements, updatedTags.Elements) ||
+		!reflect.DeepEqual(got.RelatedIDs.Elements, updatedIDs.Elements) {
+		t.Fatalf("updated PostgreSQL arrays mismatch: got=%#v", got)
+	}
+
+	got.Flags = testPostgresArray(false, true, true)
+	got.Weights = testPostgresArray(9.25, 10.5)
+	if err := database.Table(table).Save(&got).Error; err != nil {
+		t.Fatalf("save PostgreSQL array row: %v", err)
+	}
+	var saved postgresArrayCRUDRow
+	if err := database.Table(table).Where("id = ?", row.ID).Take(&saved).Error; err != nil {
+		t.Fatalf("read saved PostgreSQL array row: %v", err)
+	}
+	if !reflect.DeepEqual(saved.Flags.Elements, got.Flags.Elements) ||
+		!reflect.DeepEqual(saved.Weights.Elements, got.Weights.Elements) {
+		t.Fatalf("saved PostgreSQL arrays mismatch: got=%#v want=%#v", saved, got)
+	}
+}
+
+func assertPostgresGeneratedArrayTypes(t *testing.T, root string) {
+	t.Helper()
+	var generated strings.Builder
+	entityRoot := filepath.Join(root, "internal/model/entity")
+	if err := filepath.Walk(entityRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() || filepath.Ext(path) != ".go" {
+			return nil
+		}
+		content, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		generated.Write(content)
+		generated.WriteByte('\n')
+		return nil
+	}); err != nil {
+		t.Fatalf("read generated PostgreSQL entities: %v", err)
+	}
+	for _, want := range []string{
+		"pgtype.Array[string]",
+		"pgtype.Array[int64]",
+		"pgtype.Array[bool]",
+		"pgtype.Array[float64]",
+	} {
+		if !strings.Contains(generated.String(), want) {
+			t.Fatalf("generated PostgreSQL entities missing %q:\n%s", want, generated.String())
+		}
+	}
 }
 
 func newProject(t *testing.T, root string) gen.Project {
