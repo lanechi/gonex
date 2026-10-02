@@ -234,9 +234,6 @@ func importsForType(fieldType string) []string {
 	if strings.Contains(fieldType, "net.HardwareAddr") {
 		imports = append(imports, "net")
 	}
-	if strings.Contains(fieldType, "time.") {
-		imports = append(imports, "time")
-	}
 	return imports
 }
 
