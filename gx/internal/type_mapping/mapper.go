@@ -18,6 +18,16 @@ const (
 	DatabaseSQLServer DatabaseType = "sqlserver"
 )
 
+// PostgresType is PostgreSQL catalog metadata for one column type. ElementOID
+// is non-zero for PostgreSQL array types and identifies the element type
+// without relying on internal "_type" names or rendered "type[]" strings.
+type PostgresType struct {
+	OID         uint32
+	Name        string
+	ElementOID  uint32
+	ElementName string
+}
+
 // Column is the database metadata needed for field type mapping.
 type Column struct {
 	TableName  string
@@ -30,6 +40,7 @@ type Column struct {
 	Precision  int64
 	Scale      int64
 	Unsigned   bool
+	Postgres   *PostgresType
 }
 
 // Mapper maps one database column to a Go field type. The returned type does
@@ -42,7 +53,7 @@ type Mapper interface {
 // TableColumns groups introspected columns by table for mapping and warnings.
 type TableColumns struct {
 	Table   string
-	Columns []gorm.ColumnType
+	Columns []Column
 }
 
 // Warning describes a database type that was not recognized by a mapper.
@@ -101,22 +112,23 @@ func BuildDataTypeMap(driver DatabaseType, tables []TableColumns) Mapping {
 	importSet := make(map[string]struct{})
 
 	for _, table := range tables {
-		for _, columnType := range table.Columns {
-			column := ColumnFromGORM(table.Table, columnType)
-			key := strings.TrimSpace(columnType.DatabaseTypeName())
+		for _, column := range table.Columns {
+			mapped, ok := mapper.Map(column)
+			mappedType := mapped
+			if !ok || strings.TrimSpace(mappedType) == "" {
+				mappedType = "string"
+			}
+
+			key := strings.TrimSpace(column.DataType)
 			if key != "" {
 				if _, exists := result.TypeMap[key]; !exists {
-					result.TypeMap[key] = func(current gorm.ColumnType) string {
-						mapped, ok := mapper.Map(ColumnFromGORM("", current))
-						if !ok || strings.TrimSpace(mapped) == "" {
-							return "string"
-						}
-						return mapped
+					resolvedType := mappedType
+					result.TypeMap[key] = func(gorm.ColumnType) string {
+						return resolvedType
 					}
 				}
 			}
 
-			mapped, ok := mapper.Map(column)
 			if !ok {
 				result.Warnings = append(result.Warnings, Warning{
 					Driver:     normalizeDriver(driver),
@@ -200,6 +212,9 @@ func importsForType(fieldType string) []string {
 	}
 	if strings.Contains(fieldType, "net.HardwareAddr") {
 		imports = append(imports, "net")
+	}
+	if strings.Contains(fieldType, "time.") {
+		imports = append(imports, "time")
 	}
 	return imports
 }
