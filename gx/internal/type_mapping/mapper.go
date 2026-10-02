@@ -71,9 +71,10 @@ func (warning Warning) String() string {
 
 // Mapping contains the GORM Gen hook and the imports needed by mapped types.
 type Mapping struct {
-	TypeMap  map[string]func(gorm.ColumnType) string
-	Imports  []string
-	Warnings []Warning
+	TypeMap    map[string]func(gorm.ColumnType) string
+	FieldTypes map[string]map[string]string
+	Imports    []string
+	Warnings   []Warning
 }
 
 // New returns the mapper for a supported database driver.
@@ -108,8 +109,12 @@ func MapFieldType(driver DatabaseType, column Column) string {
 // are collected from the current schema rather than guessed from a fixed list.
 func BuildDataTypeMap(driver DatabaseType, tables []TableColumns) Mapping {
 	mapper := New(driver)
-	result := Mapping{TypeMap: make(map[string]func(gorm.ColumnType) string)}
+	result := Mapping{
+		TypeMap:    make(map[string]func(gorm.ColumnType) string),
+		FieldTypes: make(map[string]map[string]string),
+	}
 	importSet := make(map[string]struct{})
+	postgres := normalizeDriver(driver) == DatabasePostgres
 
 	for _, table := range tables {
 		for _, column := range table.Columns {
@@ -119,12 +124,22 @@ func BuildDataTypeMap(driver DatabaseType, tables []TableColumns) Mapping {
 				mappedType = "string"
 			}
 
-			key := strings.TrimSpace(column.DataType)
-			if key != "" {
-				if _, exists := result.TypeMap[key]; !exists {
-					resolvedType := mappedType
-					result.TypeMap[key] = func(gorm.ColumnType) string {
-						return resolvedType
+			isPostgresArray := postgres && column.Postgres != nil && column.Postgres.ElementOID != 0
+			if isPostgresArray {
+				if ok {
+					if result.FieldTypes[table.Table] == nil {
+						result.FieldTypes[table.Table] = make(map[string]string)
+					}
+					result.FieldTypes[table.Table][column.Name] = mappedType
+				}
+			} else {
+				key := strings.TrimSpace(column.DataType)
+				if key != "" {
+					if _, exists := result.TypeMap[key]; !exists {
+						resolvedType := mappedType
+						result.TypeMap[key] = func(gorm.ColumnType) string {
+							return resolvedType
+						}
 					}
 				}
 			}
