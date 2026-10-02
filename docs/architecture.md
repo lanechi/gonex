@@ -301,6 +301,34 @@ DirectorySwap 在任何 mutation 前进行完整 preflight：
 
 最后一条防止备份某个 target 时把另一个 staged directory 一起搬走，导致事务在已 mutation 后才失败。
 
+### PostgreSQL 类型解析
+
+`gx dao` 的 PostgreSQL 类型识别属于 discovery，而不是 Entity runtime。生成器先从 GORM
+Migrator 取得列信息，再从 `pg_catalog.pg_type` 补充真实类型 OID、`typcategory`、`typelem`
+和元素类型，随后进入统一 scalar resolver。标准数组只在 catalog 明确标记为 array category 时
+包装；不通过 `_text`、`text[]` 等字符串约定推断。
+
+GORM Gen 的 `WithDataTypeMap` 以数据库 type name 为全局 key，而 PostgreSQL introspection 可能把
+不同数组统一暴露为 `ARRAY`。因此 scalar 继续使用全局 type map，array 使用 per-model
+`FieldType(column, ...)` 覆盖，避免不同元素类型互相覆盖。
+
+运行时边界为：
+
+```text
+PostgreSQL catalog
+→ gx scalar resolver + array wrapper
+→ generated pgtype.Array[T]
+→ GORM parameter binding
+→ database/sql
+→ pgx ArrayCodec
+→ PostgreSQL
+```
+
+标准 array 使用 pgx 自带的 `pgtype.Array[T]`。不生成裸 slice：Go 1.27 + pgx 5.11 可以改进
+`database/sql` 的 array scan，但当前 GORM 在 driver 之前仍会展开普通 slice 写参数；
+`pgtype.Array[T]` 作为 struct 能保持一个 bind parameter，并用 `Valid`、`Dims`、`Elements`
+保留 NULL 与 PostgreSQL array metadata。
+
 ## 12. CI 与演进规则
 
 仓库包含多个独立 Go modules，没有根级 `go.work`。强制矩阵：
