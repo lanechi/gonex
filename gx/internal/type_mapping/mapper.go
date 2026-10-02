@@ -18,9 +18,10 @@ const (
 	DatabaseSQLServer DatabaseType = "sqlserver"
 )
 
-// PostgresType is PostgreSQL catalog metadata for one column type. ElementOID
-// is non-zero for PostgreSQL array types and identifies the element type
-// without relying on internal "_type" names or rendered "type[]" strings.
+// PostgresType is PostgreSQL catalog metadata for one column type. IsArray is
+// derived from pg_type.typcategory; ElementOID and ElementName identify the
+// array element without relying on internal "_type" names or rendered
+// "type[]" strings.
 type PostgresType struct {
 	OID         uint32
 	Name        string
