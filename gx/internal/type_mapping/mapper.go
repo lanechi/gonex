@@ -24,6 +24,7 @@ const (
 type PostgresType struct {
 	OID         uint32
 	Name        string
+	IsArray     bool
 	ElementOID  uint32
 	ElementName string
 }
@@ -124,7 +125,7 @@ func BuildDataTypeMap(driver DatabaseType, tables []TableColumns) Mapping {
 				mappedType = "string"
 			}
 
-			isPostgresArray := postgres && column.Postgres != nil && column.Postgres.ElementOID != 0
+			isPostgresArray := postgres && column.Postgres != nil && column.Postgres.IsArray
 			if isPostgresArray {
 				if ok {
 					if result.FieldTypes[table.Table] == nil {
