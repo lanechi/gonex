@@ -1,36 +1,52 @@
 package typemapping
 
-import "strings"
-
-// PostgresMapper maps PostgreSQL built-in, alias, and array types to existing
-// Go, GORM, and pgx types that can be used directly by GORM.
+// PostgresMapper maps PostgreSQL built-in types to existing Go, GORM, and pgx
+// scalar types. PostgreSQL arrays are identified from catalog metadata and
+// represented as ordinary Go slices; GORM binding is handled separately by the
+// generated pgarray serializer.
 type PostgresMapper struct{}
 
 func (PostgresMapper) Map(column Column) (string, bool) {
+	if column.Postgres != nil {
+		if column.Postgres.IsArray {
+			mapped, known := postgresArrayElementType(column.Postgres.ElementName)
+			if !known {
+				return "", false
+			}
+			return "[]" + mapped, true
+		}
+		if mapped, ok := postgresScalarType(column.Postgres.Name); ok {
+			return mapped, true
+		}
+	}
+
 	for _, candidate := range typeCandidates(column) {
-		if element, ok := arrayElementType(candidate); ok {
-			mapped, known := postgresScalarType(element)
-			if !known {
-				return "", false
-			}
-			return "[]" + mapped, true
-		}
-		if strings.HasPrefix(baseType(candidate), "array") {
-			element, ok := arrayElementType(column.ColumnType)
-			if !ok {
-				return "", false
-			}
-			mapped, known := postgresScalarType(element)
-			if !known {
-				return "", false
-			}
-			return "[]" + mapped, true
-		}
 		if mapped, ok := postgresScalarType(candidate); ok {
 			return mapped, true
 		}
 	}
 	return "", false
+}
+
+func postgresArrayElementType(value string) (string, bool) {
+	switch baseType(value) {
+	case "int2", "int4", "int8",
+		"float4", "float8", "numeric",
+		"bool",
+		"char", "bpchar", "varchar", "text", "name",
+		"uuid", "json", "jsonb", "bytea",
+		"date", "time", "timestamp", "timestamptz",
+		"interval",
+		"point", "line", "lseg", "box", "path", "polygon", "circle",
+		"bit", "varbit",
+		"inet", "cidr", "macaddr", "macaddr8",
+		"tsvector", "jsonpath", "xml", "tid",
+		"oid", "xid", "cid", "xid8",
+		"int4range", "int8range", "numrange", "daterange", "tsrange", "tstzrange":
+		return postgresScalarType(value)
+	default:
+		return "", false
+	}
 }
 
 func postgresScalarType(value string) (string, bool) {

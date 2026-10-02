@@ -162,6 +162,11 @@ if err := g.Cfg().Unmarshal(&cfg); err != nil {
 
 `g.Cfg()` 会懒加载项目根目录的 `.env` 和默认配置文件。默认配置文件按以下顺序查找，第一个存在的文件生效：`./config.yaml`、`./config/config.yaml`、`./manifest/config/config.yaml`。`gx dao` 是例外：它只读取 `DATABASE_*` 的系统环境变量和 `.env`，不会读取 `config.yaml`。
 
+PostgreSQL 项目中，`gx dao` 通过 catalog OID/element metadata 识别内置数组，并把它们生成成普通
+Go slice（例如 `text[] -> []string`、`bigint[] -> []int64`）。含数组的 Entity package 会自动
+生成 pgx-backed GORM serializer，使 Create、查询、Save 和 Entity/struct Updates 保持 slice API，
+而 PostgreSQL array 编解码继续由 pgx ArrayCodec 完成；不依赖 `lib/pq`。
+
 ## OpenAPI
 
 默认端点：

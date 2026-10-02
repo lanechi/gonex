@@ -35,6 +35,22 @@ jobs:
 
   gx:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: gonex_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d gonex_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      GX_TEST_POSTGRES_DSN: postgres://postgres:postgres@127.0.0.1:5432/gonex_test?sslmode=disable
     defaults:
       run:
         working-directory: gx

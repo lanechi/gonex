@@ -3,6 +3,7 @@ package test
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -85,6 +86,11 @@ func TestDatabaseModelGeneration(t *testing.T) {
 				t.Fatal("model generation returned no changes")
 			}
 			assertGeneratedModelFiles(t, root)
+			if driver == "postgres" {
+				assertPostgresGeneratedArrayContract(t, root)
+				writePostgresGeneratedRoundTripTest(t, root, table)
+				runGeneratedProjectTests(t, root)
+			}
 		})
 	}
 }
@@ -210,10 +216,192 @@ func prepareMySQLDatabase(configuration gen.DatabaseConfig) (gen.DatabaseConfig,
 
 func createTestTable(database *gorm.DB, driver, table string) error {
 	statement := `CREATE TABLE ` + table + ` (id BIGINT PRIMARY KEY, name VARCHAR(255) NOT NULL, active BOOLEAN NOT NULL)`
-	if driver == "sqlite" {
+	switch driver {
+	case "sqlite":
 		statement = `CREATE TABLE ` + table + ` (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, active BOOLEAN NOT NULL)`
+	case "postgres":
+		statement = `CREATE TABLE ` + table + ` (
+			id BIGINT PRIMARY KEY,
+			name VARCHAR(255) NOT NULL,
+			active BOOLEAN NOT NULL,
+			source_urls TEXT[],
+			related_ids BIGINT[],
+			flags BOOLEAN[],
+			weights DOUBLE PRECISION[]
+		)`
 	}
 	return database.Exec(statement).Error
+}
+
+func assertPostgresGeneratedArrayContract(t *testing.T, root string) {
+	t.Helper()
+	entityRoot := filepath.Join(root, "internal/model/entity")
+	var generated strings.Builder
+	if err := filepath.Walk(entityRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() || filepath.Ext(path) != ".go" {
+			return nil
+		}
+		content, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		generated.Write(content)
+		generated.WriteByte('\n')
+		return nil
+	}); err != nil {
+		t.Fatalf("read generated PostgreSQL entities: %v", err)
+	}
+
+	content := generated.String()
+	for _, want := range []string{
+		"[]string",
+		"[]int64",
+		"[]bool",
+		"[]float64",
+		"column:source_urls",
+		"column:related_ids",
+		"serializer:pgarray",
+		"pgarray:_text",
+		"pgarray:_int8",
+		"pgarray:_bool",
+		"pgarray:_float8",
+		"type:text[]",
+		"type:bigint[]",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("generated PostgreSQL entity output missing %q:\n%s", want, content)
+		}
+	}
+	for _, forbidden := range []string{
+		"*[]string",
+		"*[]int64",
+		"*[]bool",
+		"*[]float64",
+		"pgtype.Array[string]",
+		"pgtype.FlatArray[string]",
+		"pq.StringArray",
+	} {
+		if strings.Contains(content, forbidden) {
+			t.Fatalf("generated PostgreSQL entity output contains forbidden type %q:\n%s", forbidden, content)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(entityRoot, "pgarray_serializer.gen.go")); err != nil {
+		t.Fatalf("generated PostgreSQL array serializer missing: %v", err)
+	}
+}
+
+func writePostgresGeneratedRoundTripTest(t *testing.T, root, table string) {
+	t.Helper()
+	path := filepath.Join(root, "internal/model/entity/pgarray_roundtrip_test.go")
+	content := fmt.Sprintf(`package entity
+
+import (
+	"os"
+	"reflect"
+	"testing"
+
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+)
+
+type pgArrayRoundTripRow struct {
+	ID         int64     __TICK__gorm:"column:id;primaryKey"__TICK__
+	Name       string    __TICK__gorm:"column:name"__TICK__
+	Active     bool      __TICK__gorm:"column:active"__TICK__
+	SourceURLs []string  __TICK__gorm:"column:source_urls;type:text[];serializer:pgarray;pgarray:_text"__TICK__
+	RelatedIDs []int64   __TICK__gorm:"column:related_ids;type:bigint[];serializer:pgarray;pgarray:_int8"__TICK__
+	Flags      []bool    __TICK__gorm:"column:flags;type:boolean[];serializer:pgarray;pgarray:_bool"__TICK__
+	Weights    []float64 __TICK__gorm:"column:weights;type:double precision[];serializer:pgarray;pgarray:_float8"__TICK__
+}
+
+func TestGeneratedPostgresArraySerializerRoundTrip(t *testing.T) {
+	dsn := os.Getenv("GX_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("GX_TEST_POSTGRES_DSN is not configured")
+	}
+	database, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	row := pgArrayRoundTripRow{
+		ID: 1, Name: "arrays", Active: true,
+		SourceURLs: []string{"https://a.example/a.jpg", "https://b.example/b.jpg"},
+		RelatedIDs: []int64{11, 22},
+		Flags: []bool{true, false},
+		Weights: []float64{1.5, 2.5},
+	}
+	if err := database.Table(%q).Create(&row).Error; err != nil {
+		t.Fatalf("create array row: %%v", err)
+	}
+
+	var got pgArrayRoundTripRow
+	if err := database.Table(%q).Where("id = ?", row.ID).Take(&got).Error; err != nil {
+		t.Fatalf("read array row: %%v", err)
+	}
+	if !reflect.DeepEqual(got.SourceURLs, row.SourceURLs) ||
+		!reflect.DeepEqual(got.RelatedIDs, row.RelatedIDs) ||
+		!reflect.DeepEqual(got.Flags, row.Flags) ||
+		!reflect.DeepEqual(got.Weights, row.Weights) {
+		t.Fatalf("array round trip mismatch: got=%%#v want=%%#v", got, row)
+	}
+
+	empty := []string{}
+	if err := database.Table(%q).Where("id = ?", row.ID).
+		Select("SourceURLs", "RelatedIDs").
+		Updates(&pgArrayRoundTripRow{
+			SourceURLs: empty,
+			RelatedIDs: []int64{33, 44, 55},
+		}).Error; err != nil {
+		t.Fatalf("update arrays: %%v", err)
+	}
+	if err := database.Table(%q).Where("id = ?", row.ID).Take(&got).Error; err != nil {
+		t.Fatalf("read updated arrays: %%v", err)
+	}
+	if got.SourceURLs == nil || len(got.SourceURLs) != 0 {
+		t.Fatalf("empty array lost empty/non-nil semantics: %%#v", got.SourceURLs)
+	}
+	if !reflect.DeepEqual(got.RelatedIDs, []int64{33, 44, 55}) {
+		t.Fatalf("updated related ids = %%#v", got.RelatedIDs)
+	}
+
+	got.SourceURLs = nil
+	got.Flags = []bool{false, true, true}
+	if err := database.Table(%q).Save(&got).Error; err != nil {
+		t.Fatalf("save arrays: %%v", err)
+	}
+	if err := database.Table(%q).Where("id = ?", row.ID).Take(&got).Error; err != nil {
+		t.Fatalf("read saved arrays: %%v", err)
+	}
+	if got.SourceURLs != nil {
+		t.Fatalf("NULL array decoded as non-nil slice: %%#v", got.SourceURLs)
+	}
+	if !reflect.DeepEqual(got.Flags, []bool{false, true, true}) {
+		t.Fatalf("saved flags = %%#v", got.Flags)
+	}
+}
+`, table, table, table, table, table, table)
+	content = strings.ReplaceAll(content, "__TICK__", "`")
+	writeFile(t, path, content)
+}
+
+func runGeneratedProjectTests(t *testing.T, root string) {
+	t.Helper()
+	for _, arguments := range [][]string{
+		{"mod", "tidy"},
+		{"test", "./..."},
+	} {
+		command := exec.Command("go", arguments...)
+		command.Dir = root
+		command.Env = os.Environ()
+		output, err := command.CombinedOutput()
+		if err != nil {
+			t.Fatalf("generated project go %s failed: %v\n%s", strings.Join(arguments, " "), err, output)
+		}
+	}
 }
 
 func newProject(t *testing.T, root string) gen.Project {

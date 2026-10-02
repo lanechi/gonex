@@ -301,6 +301,35 @@ DirectorySwap 在任何 mutation 前进行完整 preflight：
 
 最后一条防止备份某个 target 时把另一个 staged directory 一起搬走，导致事务在已 mutation 后才失败。
 
+### PostgreSQL array 生成边界
+
+`gx dao` 的 PostgreSQL array discovery 读取 `pg_catalog.pg_type` 的 OID、`typcategory`、
+`typelem` 和元素类型，不依赖 `_text` / `text[]` 字符串猜测。GORM Gen 的 data type map 以
+database type name 为全局 key，而 PostgreSQL introspection 可能把不同数组都暴露为 `ARRAY`，
+因此数组必须使用 column-specific `FieldType` / GORM tag override，不能注册一个全局
+`TypeMap["ARRAY"]`。
+
+标准内置数组生成普通 Go slice，并在有数组的 Entity package 生成一个 gx 受管 serializer：
+
+```text
+pg_catalog
+→ gx scalar resolver + array wrapper
+→ []T + serializer:pgarray
+→ GORM serializer driver.Valuer boundary
+→ database/sql
+→ pgx TypeMap / ArrayCodec
+→ PostgreSQL
+```
+
+serializer 不实现 PostgreSQL array parser。写入时它只把原始 slice 作为单个 driver 参数交给 pgx；
+读取时用 `pgtype.Map.Scan` 让 ArrayCodec 填充 slice。这样 Entity 不泄漏 `pgtype.Array[T]`，
+同时保留 `nil slice = SQL NULL`、`non-nil empty slice = empty array`。
+
+GORM 的 `Updates(map[string]any)` 是显式例外：update callback 把 map value 直接写入 assignment，
+不会执行字段 serializer；GORM Gen 的 `UpdateColumn` / `UpdateSimple` 裸值路径具有同样边界。
+数组自动写入契约因此覆盖 Create、查询、Save 和 Entity/struct Updates（包括生成 DAO 的
+`Updates(entity)`）；map、裸值单列更新和 Raw SQL 更新数组必须显式提供单参数表达式。
+
 ## 12. CI 与演进规则
 
 仓库包含多个独立 Go modules，没有根级 `go.work`。强制矩阵：

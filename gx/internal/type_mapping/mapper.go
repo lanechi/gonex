@@ -18,6 +18,18 @@ const (
 	DatabaseSQLServer DatabaseType = "sqlserver"
 )
 
+// PostgresType is PostgreSQL catalog metadata for one column type. IsArray is
+// derived from pg_type.typcategory; ElementOID and ElementName identify the
+// array element without relying on internal "_type" names or rendered
+// "type[]" strings.
+type PostgresType struct {
+	OID         uint32
+	Name        string
+	IsArray     bool
+	ElementOID  uint32
+	ElementName string
+}
+
 // Column is the database metadata needed for field type mapping.
 type Column struct {
 	TableName  string
@@ -30,6 +42,7 @@ type Column struct {
 	Precision  int64
 	Scale      int64
 	Unsigned   bool
+	Postgres   *PostgresType
 }
 
 // Mapper maps one database column to a Go field type. The returned type does
@@ -42,7 +55,14 @@ type Mapper interface {
 // TableColumns groups introspected columns by table for mapping and warnings.
 type TableColumns struct {
 	Table   string
-	Columns []gorm.ColumnType
+	Columns []Column
+}
+
+// FieldMapping contains a column-specific generated field override.
+type FieldMapping struct {
+	Type           string
+	Serializer     string
+	PostgresDBType string
 }
 
 // Warning describes a database type that was not recognized by a mapper.
@@ -61,6 +81,7 @@ func (warning Warning) String() string {
 // Mapping contains the GORM Gen hook and the imports needed by mapped types.
 type Mapping struct {
 	TypeMap  map[string]func(gorm.ColumnType) string
+	Fields   map[string]map[string]FieldMapping
 	Imports  []string
 	Warnings []Warning
 }
@@ -97,26 +118,45 @@ func MapFieldType(driver DatabaseType, column Column) string {
 // are collected from the current schema rather than guessed from a fixed list.
 func BuildDataTypeMap(driver DatabaseType, tables []TableColumns) Mapping {
 	mapper := New(driver)
-	result := Mapping{TypeMap: make(map[string]func(gorm.ColumnType) string)}
+	result := Mapping{
+		TypeMap: make(map[string]func(gorm.ColumnType) string),
+		Fields:  make(map[string]map[string]FieldMapping),
+	}
 	importSet := make(map[string]struct{})
+	postgres := normalizeDriver(driver) == DatabasePostgres
 
 	for _, table := range tables {
-		for _, columnType := range table.Columns {
-			column := ColumnFromGORM(table.Table, columnType)
-			key := strings.TrimSpace(columnType.DatabaseTypeName())
-			if key != "" {
-				if _, exists := result.TypeMap[key]; !exists {
-					result.TypeMap[key] = func(current gorm.ColumnType) string {
-						mapped, ok := mapper.Map(ColumnFromGORM("", current))
-						if !ok || strings.TrimSpace(mapped) == "" {
-							return "string"
+		for _, column := range table.Columns {
+			mapped, ok := mapper.Map(column)
+			isPostgresArray := postgres && column.Postgres != nil && column.Postgres.IsArray
+
+			if isPostgresArray {
+				if ok {
+					if result.Fields[table.Table] == nil {
+						result.Fields[table.Table] = make(map[string]FieldMapping)
+					}
+					result.Fields[table.Table][column.Name] = FieldMapping{
+						Type:           mapped,
+						Serializer:     "pgarray",
+						PostgresDBType: column.Postgres.Name,
+					}
+				}
+			} else {
+				key := strings.TrimSpace(column.DataType)
+				if key != "" {
+					if _, exists := result.TypeMap[key]; !exists {
+						tableName := table.Table
+						result.TypeMap[key] = func(current gorm.ColumnType) string {
+							resolved, known := mapper.Map(ColumnFromGORM(tableName, current))
+							if !known || strings.TrimSpace(resolved) == "" {
+								return "string"
+							}
+							return resolved
 						}
-						return mapped
 					}
 				}
 			}
 
-			mapped, ok := mapper.Map(column)
 			if !ok {
 				result.Warnings = append(result.Warnings, Warning{
 					Driver:     normalizeDriver(driver),

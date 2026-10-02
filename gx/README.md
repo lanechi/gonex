@@ -214,12 +214,31 @@ internal/dao/**/*.gen.go
 internal/model/entity/**/*.gen.go
 ```
 
-PostgreSQL 类型生成以“直接使用成熟实现”为原则，不在 gonex 中复制数据库值类型。Go 1.27 项目通过
-pgx 5.11+ 的 `database/sql` 类型扫描能力直接使用原生 slice 和 pgx 类型；`gx dao` 会为 PostgreSQL
-项目保证 `github.com/jackc/pgx/v5 >= v5.11.0`，已有更高版本不会被降级。典型映射包括：
+PostgreSQL 类型生成以“直接使用成熟实现”为原则，不在 gonex 中复制 PostgreSQL 数组解析器。
+`gx dao` 会从 `pg_catalog.pg_type` 读取真实类型 OID、`typcategory`、`typelem` 和元素类型；
+数组识别不依赖 `_text`、`text[]` 等字符串猜测。Go 1.27 项目保证
+`github.com/jackc/pgx/v5 >= v5.11.0`，已有更高版本不会被降级。
+
+标准 PostgreSQL 数组在 Entity 中保持普通 Go slice：
+
+```go
+SourceURLs []string  `gorm:"column:source_urls;type:text[];serializer:pgarray;pgarray:_text"`
+RelatedIDs []int64   `gorm:"column:related_ids;type:bigint[];serializer:pgarray;pgarray:_int8"`
+Flags      []bool    `gorm:"column:flags;type:boolean[];serializer:pgarray;pgarray:_bool"`
+Weights    []float64 `gorm:"column:weights;type:double precision[];serializer:pgarray;pgarray:_float8"`
+```
+
+含数组的 Entity package 会同时生成 `pgarray_serializer.gen.go`。它只负责 GORM 边界：
+写入时让 slice 以单个 driver 参数进入 pgx，读取时把 PostgreSQL array 文本交回
+`pgtype.Map` / `ArrayCodec`；gonex 不自行转义或解析 `{a,b}`，也不使用 `lib/pq`。
+典型映射包括：
 
 ```text
-text[] / bigint[]       -> []string / []int64
+text[]                  -> []string
+bigint[]                -> []int64
+boolean[]               -> []bool
+double precision[]      -> []float64
+uuid[]                  -> []datatypes.UUID
 uuid                    -> datatypes.UUID
 json / jsonb            -> datatypes.JSON
 numeric / decimal       -> decimal.Decimal
@@ -228,6 +247,17 @@ inet / cidr             -> netip.Addr / netip.Prefix
 point / line / polygon  -> pgtype 对应几何类型
 range / multirange      -> pgtype.Range / pgtype.Multirange
 ```
+
+slice 语义保持 PostgreSQL 的 NULL/空数组区别：`nil` slice 对应 SQL NULL，非 nil 的空 slice
+对应空数组。Create、Find/First、Save 和基于 Entity/struct 的 Updates 会经过字段 serializer。
+GORM 的 `Updates(map[string]any)` 会把 map value 直接构造成 assignment，不执行字段 serializer；
+GORM Gen 的 `UpdateColumn(..., []T)` / `UpdateSimple` 这类裸值路径同理。因此不要把裸 `[]T`
+直接交给这些更新 API；优先使用生成 DAO 的 `Updates(entity)`、GORM 的 Entity/struct 更新，
+或显式 SQL expression。
+
+当前自动 slice serializer 仅用于 pgx 默认 TypeMap 已注册 codec 的 PostgreSQL 内置数组。
+自定义 enum/domain/extension 类型数组必须先设计对应的 pgx type registration，不能假定内置 serializer
+已经认识动态 OID。
 
 `gx dao` 会先在 module 内的临时目录生成、修复数据库注释可能造成的非法 struct tag，并校验全部
 Go 文件；验证通过后才成对替换 DAO/Entity。依赖整理使用 `go mod tidy -e`，因此项目中无关包暂时存在

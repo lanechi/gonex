@@ -69,17 +69,6 @@ func isUnsigned(column Column) bool {
 	return column.Unsigned || strings.Contains(normalizeType(column.ColumnType), " unsigned") || strings.Contains(normalizeType(column.DataType), " unsigned")
 }
 
-func arrayElementType(value string) (string, bool) {
-	value = normalizeType(value)
-	if strings.HasPrefix(value, "_") && len(value) > 1 {
-		return strings.TrimPrefix(value, "_"), true
-	}
-	if strings.HasSuffix(value, "[]") {
-		return strings.TrimSpace(strings.TrimSuffix(value, "[]")), true
-	}
-	return "", false
-}
-
 func noPointerType(value string) bool {
 	return strings.HasPrefix(value, "[]") ||
 		value == "datatypes.JSON" ||

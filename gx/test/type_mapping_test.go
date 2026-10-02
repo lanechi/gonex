@@ -34,6 +34,22 @@ func (column testColumnType) DecimalSize() (int64, int64, bool) { return 0, 0, f
 
 var _ gorm.ColumnType = testColumnType{}
 
+func postgresArrayColumn(name string, arrayOID uint32, arrayName string, elementOID uint32, elementName string) typemapping.Column {
+	return typemapping.Column{
+		Name:       name,
+		DataType:   "ARRAY",
+		ColumnType: elementName + "[]",
+		Nullable:   true,
+		Postgres: &typemapping.PostgresType{
+			OID:         arrayOID,
+			Name:        arrayName,
+			IsArray:     true,
+			ElementOID:  elementOID,
+			ElementName: elementName,
+		},
+	}
+}
+
 func TestTypeMappingAcrossDatabases(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -76,32 +92,99 @@ func TestTypeMappingAcrossDatabases(t *testing.T) {
 
 func TestPostgresArrayMappingUsesNativeSlices(t *testing.T) {
 	tests := []struct {
-		dataType string
-		want     string
+		name        string
+		arrayOID    uint32
+		arrayName   string
+		elementOID  uint32
+		elementName string
+		want        string
 	}{
-		{"text[]", "[]string"},
-		{"bigint[]", "[]int64"},
-		{"uuid[]", "[]datatypes.UUID"},
-		{"bytea[]", "[][]byte"},
-		{"interval[]", "[]pgtype.Interval"},
-		{"int4range[]", "[]pgtype.Range[int32]"},
-		{"_float8", "[]float64"},
+		{"text", 1009, "_text", 25, "text", "[]string"},
+		{"bigint", 1016, "_int8", 20, "int8", "[]int64"},
+		{"uuid", 2951, "_uuid", 2950, "uuid", "[]datatypes.UUID"},
+		{"bytea", 1001, "_bytea", 17, "bytea", "[][]byte"},
+		{"interval", 1187, "_interval", 1186, "interval", "[]pgtype.Interval"},
+		{"int4range", 3905, "_int4range", 3904, "int4range", "[]pgtype.Range[int32]"},
+		{"float8", 1022, "_float8", 701, "float8", "[]float64"},
 	}
 	for _, test := range tests {
-		t.Run(test.dataType, func(t *testing.T) {
-			got := typemapping.MapFieldType(typemapping.DatabasePostgres, typemapping.Column{
-				DataType: test.dataType,
-				Nullable: true,
-			})
+		t.Run(test.name, func(t *testing.T) {
+			got := typemapping.MapFieldType(
+				typemapping.DatabasePostgres,
+				postgresArrayColumn("values", test.arrayOID, test.arrayName, test.elementOID, test.elementName),
+			)
 			if got != test.want {
-				t.Fatalf("MapFieldType(%q) = %q, want %q", test.dataType, got, test.want)
+				t.Fatalf("MapFieldType(%q) = %q, want %q", test.elementName, got, test.want)
 			}
 		})
 	}
 }
 
+func TestPostgresArrayMappingRequiresCatalogMetadata(t *testing.T) {
+	for _, dataType := range []string{"text[]", "_text", "ARRAY"} {
+		got := typemapping.MapFieldType(typemapping.DatabasePostgres, typemapping.Column{
+			DataType: dataType,
+			Nullable: true,
+		})
+		if got != "*string" {
+			t.Fatalf("MapFieldType(%q) without catalog metadata = %q, want *string fallback", dataType, got)
+		}
+	}
+}
+
+func TestPostgresArraysUseColumnSpecificSerializerMapping(t *testing.T) {
+	mapping := typemapping.BuildDataTypeMap(typemapping.DatabasePostgres, []typemapping.TableColumns{{
+		Table: "public.documents",
+		Columns: []typemapping.Column{
+			func() typemapping.Column {
+				column := postgresArrayColumn("source_urls", 1009, "_text", 25, "text")
+				column.TableName = "public.documents"
+				return column
+			}(),
+			func() typemapping.Column {
+				column := postgresArrayColumn("related_ids", 1016, "_int8", 20, "int8")
+				column.TableName = "public.documents"
+				return column
+			}(),
+			{TableName: "public.documents", Name: "title", DataType: "text", ColumnType: "text"},
+		},
+	}})
+
+	if _, exists := mapping.TypeMap["ARRAY"]; exists {
+		t.Fatal("PostgreSQL ARRAY must not use a global GORM Gen data type hook")
+	}
+	source := mapping.Fields["public.documents"]["source_urls"]
+	if source.Type != "[]string" || source.Serializer != "pgarray" || source.PostgresDBType != "_text" {
+		t.Fatalf("unexpected source_urls mapping: %#v", source)
+	}
+	related := mapping.Fields["public.documents"]["related_ids"]
+	if related.Type != "[]int64" || related.Serializer != "pgarray" || related.PostgresDBType != "_int8" {
+		t.Fatalf("unexpected related_ids mapping: %#v", related)
+	}
+	if got := mapping.TypeMap["text"](testColumnType{databaseType: "text", columnType: "text"}); got != "string" {
+		t.Fatalf("text scalar mapping = %q, want string", got)
+	}
+}
+
+func TestPostgresExtensionArrayIsNotAutoSerialized(t *testing.T) {
+	column := postgresArrayColumn("labels", 16391, "_citext", 16390, "citext")
+	column.TableName = "public.documents"
+	mapping := typemapping.BuildDataTypeMap(typemapping.DatabasePostgres, []typemapping.TableColumns{{
+		Table:   "public.documents",
+		Columns: []typemapping.Column{column},
+	}})
+
+	if fields := mapping.Fields["public.documents"]; len(fields) != 0 {
+		t.Fatalf("unsupported extension array unexpectedly received serializer mapping: %#v", fields)
+	}
+	if len(mapping.Warnings) != 1 || mapping.Warnings[0].Column != "labels" {
+		t.Fatalf("unexpected extension array warnings: %#v", mapping.Warnings)
+	}
+}
+
 func TestTypeMappingPreservesNullableCollectionValues(t *testing.T) {
-	if got := typemapping.MapFieldType(typemapping.DatabasePostgres, typemapping.Column{DataType: "text[]", Nullable: true}); got != "[]string" {
+	array := postgresArrayColumn("tags", 1009, "_text", 25, "text")
+	if got := typemapping.MapFieldType(typemapping.DatabasePostgres, array); got != "[]string" {
 		t.Fatalf("nullable text array = %q, want []string", got)
 	}
 	if got := typemapping.MapFieldType(typemapping.DatabasePostgres, typemapping.Column{DataType: "bigint", Nullable: true}); got != "*int64" {
@@ -115,12 +198,12 @@ func TestTypeMappingPreservesNullableCollectionValues(t *testing.T) {
 func TestTypeMappingCollectsExternalImports(t *testing.T) {
 	mapping := typemapping.BuildDataTypeMap(typemapping.DatabasePostgres, []typemapping.TableColumns{{
 		Table: "all_types",
-		Columns: []gorm.ColumnType{
-			testColumnType{name: "uuid", databaseType: "uuid", columnType: "uuid"},
-			testColumnType{name: "amount", databaseType: "numeric", columnType: "numeric(20,8)"},
-			testColumnType{name: "duration", databaseType: "interval", columnType: "interval"},
-			testColumnType{name: "ip", databaseType: "inet", columnType: "inet"},
-			testColumnType{name: "mac", databaseType: "macaddr", columnType: "macaddr"},
+		Columns: []typemapping.Column{
+			{Name: "uuid", DataType: "uuid", ColumnType: "uuid"},
+			{Name: "amount", DataType: "numeric", ColumnType: "numeric(20,8)"},
+			{Name: "duration", DataType: "interval", ColumnType: "interval"},
+			{Name: "ip", DataType: "inet", ColumnType: "inet"},
+			{Name: "mac", DataType: "macaddr", ColumnType: "macaddr"},
 		},
 	}})
 	for _, want := range []string{
@@ -136,12 +219,31 @@ func TestTypeMappingCollectsExternalImports(t *testing.T) {
 	}
 }
 
+func TestTypeMappingKeepsScalarHooksColumnSensitive(t *testing.T) {
+	mapping := typemapping.BuildDataTypeMap(typemapping.DatabaseMySQL, []typemapping.TableColumns{{
+		Table: "values",
+		Columns: []typemapping.Column{
+			{Name: "enabled", DataType: "tinyint", ColumnType: "tinyint(1)"},
+		},
+	}})
+	hook := mapping.TypeMap["tinyint"]
+	if hook == nil {
+		t.Fatal("missing tinyint type hook")
+	}
+	if got := hook(testColumnType{databaseType: "tinyint", columnType: "tinyint(1)"}); got != "bool" {
+		t.Fatalf("tinyint(1) = %q, want bool", got)
+	}
+	if got := hook(testColumnType{databaseType: "tinyint", columnType: "tinyint(4)"}); got != "int8" {
+		t.Fatalf("tinyint(4) = %q, want int8", got)
+	}
+}
+
 func TestTypeMappingBuildsWarningsAndColumnMetadata(t *testing.T) {
 	mapping := typemapping.BuildDataTypeMap(typemapping.DatabasePostgres, []typemapping.TableColumns{{
 		Table: "users",
-		Columns: []gorm.ColumnType{
-			testColumnType{name: "id", databaseType: "int8", columnType: "bigint"},
-			testColumnType{name: "location", databaseType: "USER-DEFINED", columnType: "geometry"},
+		Columns: []typemapping.Column{
+			{Name: "id", DataType: "int8", ColumnType: "bigint"},
+			{Name: "location", DataType: "USER-DEFINED", ColumnType: "geometry"},
 		},
 	}})
 	if got := mapping.TypeMap["int8"](testColumnType{databaseType: "int8", columnType: "bigint"}); got != "int64" {

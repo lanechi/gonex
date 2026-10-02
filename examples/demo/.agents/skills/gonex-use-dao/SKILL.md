@@ -74,6 +74,29 @@ func (*logic) Summary(ctx context.Context, id int64) (*model.UserSummary, error)
 
 若 `dao.Q` 已能完成同一操作，必须使用 DAO，不要默认编写 Raw SQL。
 
+## PostgreSQL 数组字段
+
+PostgreSQL 内置数组由 `gx dao` 读取 catalog 元数据后生成普通 Go slice：
+
+```text
+text[]             -> []string
+bigint[]           -> []int64
+boolean[]          -> []bool
+double precision[] -> []float64
+```
+
+生成字段会带 `serializer:pgarray` 和内部的 `pgarray:_type` 元数据；同一 Entity package 还会有
+gx 受管的 `pgarray_serializer.gen.go`。不要手工修改这些标签或 serializer 文件，也不要把字段改为
+`pq.*Array`、`pgtype.Array[T]` 或自定义 slice wrapper。业务逻辑直接使用普通 slice。
+
+数组写入使用生成 Entity/struct 的 Create、Save 或 Updates。不要把裸 slice 放进
+`Updates(map[string]any)`：GORM 的 map 更新直接使用 map value，不调用字段 serializer。GORM Gen 的
+`UpdateColumn(..., []T)` / `UpdateSimple` 裸值更新同样不属于自动 serializer 路径。数组更新优先使用
+`dao.Q.<table>.WithContext(ctx).Updates(entity)` 或 GORM Entity/struct；确实需要 map/Raw SQL 时，
+必须显式构造能作为单个 PostgreSQL array 参数的 expression，并在 Logic 中说明原因。
+
+`nil` slice 对应 SQL NULL；非 nil 空 slice 对应 PostgreSQL 空数组。不要为了方便把两者统一。
+
 ## 依赖与验证
 
 数据库驱动和连接生命周期由应用启动层持有。生成结束后运行 `gofmt`、目标 module 的测试和

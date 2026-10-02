@@ -11,10 +11,10 @@ import (
 	typemapping "github.com/lanechi/gonex/gx/internal/type_mapping"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
-
 	"gorm.io/driver/sqlite"
 	"gorm.io/driver/sqlserver"
 	"gorm.io/gen"
+	"gorm.io/gen/field"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	"gorm.io/gorm/schema"
@@ -68,16 +68,79 @@ func buildTypeMapping(
 		if err != nil {
 			return typemapping.Mapping{}, fmt.Errorf("read columns for table %s: %w", tableName, err)
 		}
+		mappedColumns := make([]typemapping.Column, 0, len(columns))
+		for _, column := range columns {
+			mappedColumns = append(mappedColumns, typemapping.ColumnFromGORM(tableName, column))
+		}
 		introspected = append(introspected, typemapping.TableColumns{
-			Table: tableName,
-			Columns: columns,
+			Table:   tableName,
+			Columns: mappedColumns,
 		})
 	}
+
+	if isPostgresDriver(string(driver)) {
+		postgresTypes, err := loadPostgresColumnTypes(database, tableNames)
+		if err != nil {
+			return typemapping.Mapping{}, err
+		}
+		for tableIndex := range introspected {
+			for columnIndex := range introspected[tableIndex].Columns {
+				column := &introspected[tableIndex].Columns[columnIndex]
+				postgresType, ok := postgresTypes[postgresColumnTypeKey(column.TableName, column.Name)]
+				if !ok {
+					continue
+				}
+				column.Postgres = &postgresType
+			}
+		}
+	}
+
 	mapping := typemapping.BuildDataTypeMap(driver, introspected)
 	for _, warning := range mapping.Warnings {
 		fmt.Fprintf(os.Stderr, "WARN %s\n", warning.String())
 	}
 	return mapping, nil
+}
+
+func postgresModelOptions(mapping typemapping.Mapping, tableName string) []gen.ModelOpt {
+	fields := mapping.Fields[tableName]
+	if len(fields) == 0 {
+		return nil
+	}
+
+	columnNames := make([]string, 0, len(fields))
+	for columnName := range fields {
+		columnNames = append(columnNames, columnName)
+	}
+	sort.Strings(columnNames)
+
+	options := make([]gen.ModelOpt, 0, len(columnNames)*2)
+	for _, columnName := range columnNames {
+		mapped := fields[columnName]
+		options = append(options, gen.FieldType(columnName, mapped.Type))
+		if mapped.Serializer == "" {
+			continue
+		}
+		serializer := mapped.Serializer
+		postgresType := mapped.PostgresDBType
+		options = append(options, gen.FieldGORMTag(columnName, func(tag field.GormTag) field.GormTag {
+			tag.Set("serializer", serializer)
+			if postgresType != "" {
+				tag.Set("pgarray", postgresType)
+			}
+			return tag
+		}))
+	}
+	return options
+}
+
+func mappingHasPostgresArrays(mapping typemapping.Mapping, tables []postgresTable) bool {
+	for _, table := range tables {
+		if len(mapping.Fields[qualifiedPostgresTable(table)]) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func stripNullableCollectionType(field gen.Field) gen.Field {
@@ -128,6 +191,80 @@ func generateModels(database *gorm.DB, outputRoot, modelRoot string, tables []st
 	return executeModelGenerator(generator)
 }
 
+type postgresColumnTypeRow struct {
+	TableSchema     string `gorm:"column:table_schema"`
+	TableName       string `gorm:"column:table_name"`
+	ColumnName      string `gorm:"column:column_name"`
+	TypeOID         uint32 `gorm:"column:type_oid"`
+	TypeName        string `gorm:"column:type_name"`
+	IsArray         bool   `gorm:"column:is_array"`
+	ElementOID      uint32 `gorm:"column:element_oid"`
+	ElementTypeName string `gorm:"column:element_type_name"`
+}
+
+func loadPostgresColumnTypes(database *gorm.DB, tableNames []string) (map[string]typemapping.PostgresType, error) {
+	if len(tableNames) == 0 {
+		return map[string]typemapping.PostgresType{}, nil
+	}
+
+	conditions := make([]string, 0, len(tableNames))
+	arguments := make([]any, 0, len(tableNames)*2)
+	for _, tableName := range tableNames {
+		schemaName, relationName := splitPostgresTableReference(tableName)
+		if schemaName == "" || relationName == "" {
+			return nil, fmt.Errorf("PostgreSQL catalog lookup requires a schema-qualified table: %q", tableName)
+		}
+		conditions = append(conditions, "(namespace.nspname = ? AND relation.relname = ?)")
+		arguments = append(arguments, schemaName, relationName)
+	}
+
+	query := `
+		SELECT
+			namespace.nspname AS table_schema,
+			relation.relname AS table_name,
+			attribute.attname AS column_name,
+			type.oid::bigint AS type_oid,
+			type.typname AS type_name,
+			(type.typcategory = 'A') AS is_array,
+			type.typelem::bigint AS element_oid,
+			COALESCE(element_type.typname, '') AS element_type_name
+		FROM pg_catalog.pg_attribute AS attribute
+		JOIN pg_catalog.pg_class AS relation
+			ON relation.oid = attribute.attrelid
+		JOIN pg_catalog.pg_namespace AS namespace
+			ON namespace.oid = relation.relnamespace
+		JOIN pg_catalog.pg_type AS type
+			ON type.oid = attribute.atttypid
+		LEFT JOIN pg_catalog.pg_type AS element_type
+			ON element_type.oid = type.typelem
+		WHERE attribute.attnum > 0
+		  AND NOT attribute.attisdropped
+		  AND (` + strings.Join(conditions, " OR ") + `)
+		ORDER BY namespace.nspname, relation.relname, attribute.attnum
+	`
+
+	var rows []postgresColumnTypeRow
+	if err := database.Raw(query, arguments...).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("read PostgreSQL type catalog: %w", err)
+	}
+
+	result := make(map[string]typemapping.PostgresType, len(rows))
+	for _, row := range rows {
+		result[postgresColumnTypeKey(row.TableSchema+"."+row.TableName, row.ColumnName)] = typemapping.PostgresType{
+			OID:         row.TypeOID,
+			Name:        row.TypeName,
+			IsArray:     row.IsArray,
+			ElementOID:  row.ElementOID,
+			ElementName: row.ElementTypeName,
+		}
+	}
+	return result, nil
+}
+
+func postgresColumnTypeKey(tableName, columnName string) string {
+	return tableName + "\x00" + columnName
+}
+
 type postgresTable struct {
 	Schema string `gorm:"column:table_schema"`
 	Name   string `gorm:"column:table_name"`
@@ -172,7 +309,12 @@ func generatePostgresModels(project Project, database *gorm.DB, requested, outpu
 		generator.WithFileNameStrategy(stripPostgresSchemaFromFileName)
 		models := make([]interface{}, 0, len(selected))
 		for _, table := range selected {
-			model := generator.GenerateModelAs(qualifiedPostgresTable(table), postgresModelName(table.Name))
+			qualifiedTable := qualifiedPostgresTable(table)
+			model := generator.GenerateModelAs(
+				qualifiedTable,
+				postgresModelName(table.Name),
+				postgresModelOptions(mapping, qualifiedTable)...,
+			)
 			if model != nil {
 				models = append(models, model)
 			}
@@ -181,7 +323,15 @@ func generatePostgresModels(project Project, database *gorm.DB, requested, outpu
 			return fmt.Errorf("no database tables found for model generation")
 		}
 		generator.ApplyBasic(models...)
-		return executeModelGenerator(generator)
+		if err := executeModelGenerator(generator); err != nil {
+			return err
+		}
+		if mappingHasPostgresArrays(mapping, selected) {
+			if err := writePostgresArraySerializer(modelRoot); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 
 	for _, schemaName := range schemas {
@@ -291,7 +441,12 @@ func generatePostgresSchema(
 	generator.WithFileNameStrategy(stripPostgresSchemaFromFileName)
 	models := make([]interface{}, 0, len(tables))
 	for _, table := range tables {
-		model := generator.GenerateModelAs(qualifiedPostgresTable(table), postgresModelName(table.Name))
+		qualifiedTable := qualifiedPostgresTable(table)
+		model := generator.GenerateModelAs(
+			qualifiedTable,
+			postgresModelName(table.Name),
+			postgresModelOptions(mapping, qualifiedTable)...,
+		)
 		if model != nil {
 			models = append(models, model)
 		}
@@ -302,6 +457,11 @@ func generatePostgresSchema(
 	generator.ApplyBasic(models...)
 	if err := executeModelGenerator(generator); err != nil {
 		return fmt.Errorf("generate PostgreSQL schema %q: %w", schemaName, err)
+	}
+	if mappingHasPostgresArrays(mapping, tables) {
+		if err := writePostgresArraySerializer(stageEntity); err != nil {
+			return err
+		}
 	}
 
 	finalDAO := filepath.Join(outputRoot, schemaName)

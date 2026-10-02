@@ -72,6 +72,27 @@ Controller、Service 和审查也有对应项目 skill。
 启动基础设施和全局连接生命周期。配置统一通过 `g.Cfg()` 获取；禁止在业务代码中自行创建 DAO、
 Repository、DB wrapper 或数据库连接。
 
+## PostgreSQL 数组
+
+`gx dao` 对 PostgreSQL 内置数组生成普通 Go slice，而不是 `pgtype.Array[T]` 或 `pq.*Array`：
+
+```go
+SourceURLs []string `gorm:"column:source_urls;type:text[];serializer:pgarray;pgarray:_text"`
+ImageURLs  []string `gorm:"column:image_urls;type:text[];serializer:pgarray;pgarray:_text"`
+VideoURLs  []string `gorm:"column:video_urls;type:text[];serializer:pgarray;pgarray:_text"`
+```
+
+只要 Entity package 中存在数组字段，gx 会同时生成 `pgarray_serializer.gen.go` 并自动注册
+`pgarray` serializer。业务代码直接读写 `[]string`、`[]int64`、`[]bool` 等；serializer
+只负责阻止 GORM 把 slice 展开成多个 SQL 参数，真正的 PostgreSQL array 编解码仍由 pgx ArrayCodec
+完成。
+
+`nil` slice 表示 SQL NULL，非 nil 的空 slice 表示 PostgreSQL 空数组。Create、查询、Save 和
+Entity/struct Updates 可直接使用这些字段。不要使用
+`Updates(map[string]any{"source_urls": []string{...}})` 更新数组：GORM 的 map update 不经过字段
+serializer；GORM Gen 的 `UpdateColumn(..., []T)` / `UpdateSimple` 裸值路径也不会自动套 serializer。
+需要更新数组时使用生成 DAO 的 `Updates(entity)`、GORM Entity/struct，或显式 SQL expression。
+
 ## 定时任务
 
 需要应用内定时工作时，通过 `server.Scheduler().Add(scheduler.Job{...})` 在启动组合根注册。任务使用

@@ -115,6 +115,15 @@ DATABASE_LOG_SLOW_THRESHOLD=200ms
 `github.com/lanechi/gonex/contrib/gormlog` 接入框架 Logger。数据库由应用初始化，并在
 `server.OnStop` 中关闭。
 
+### PostgreSQL 数组
+
+对 `text[]`、`bigint[]`、`boolean[]` 等 pgx 已内置 codec 的 PostgreSQL 数组，`gx dao`
+生成普通 `[]T` Entity 字段，并在同一 Entity package 自动生成 `pgarray_serializer.gen.go`。
+业务层不需要 `lib/pq`、`pgtype.Array[T]` 或自定义 PostgreSQL array parser。
+
+写入数组时优先使用生成 Entity/struct 的 Create、Save、Updates；GORM 的
+`Updates(map[string]any)` 会绕过字段 serializer，因此 map 中的裸 slice 不属于自动支持路径。
+
 ## 使用本地 gx 重新生成
 
 先从 gonex 仓库根目录构建：

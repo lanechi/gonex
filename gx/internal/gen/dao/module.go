@@ -37,8 +37,9 @@ func ensureModelDependencies(project Project, result *Result, driver string) err
 	}
 	if isPostgresDriver(driver) {
 		// pgx 5.11 is the first release that uses Go 1.27's
-		// driver.RowsColumnScanner support. GORM's database/sql path can then
-		// scan PostgreSQL arrays and ranges directly into generated Go values.
+		// driver.RowsColumnScanner support for direct PostgreSQL scans. Generated
+		// PostgreSQL array serializers also delegate array encoding and decoding
+		// to pgx, so keep the project on at least this version.
 		dependencies = append(dependencies, struct {
 			path    string
 			version string
