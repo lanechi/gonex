@@ -72,6 +72,39 @@ Controller、Service 和审查也有对应项目 skill。
 启动基础设施和全局连接生命周期。配置统一通过 `g.Cfg()` 获取；禁止在业务代码中自行创建 DAO、
 Repository、DB wrapper 或数据库连接。
 
+## PostgreSQL 数组
+
+项目固定使用 Go 1.27，并由 `gx dao` 保证 PostgreSQL 项目的 pgx 至少为 5.11。数据库字段例如：
+
+```sql
+tags text[],
+related_ids bigint[],
+flags boolean[]
+```
+
+生成的 Entity 使用 pgx 已有数组类型：
+
+```go
+Tags       pgtype.Array[string] `gorm:"column:tags;type:text[]"`
+RelatedIDs pgtype.Array[int64]  `gorm:"column:related_ids;type:bigint[]"`
+Flags      pgtype.Array[bool]   `gorm:"column:flags;type:boolean[]"`
+```
+
+业务代码不需要 `lib/pq`，也不要为这些字段自行实现 `sql.Scanner`/`driver.Valuer`。构造普通
+一维数组时，设置 `Elements`、`Dims` 和 `Valid`；`Valid=false` 表示 SQL NULL：
+
+```go
+tags := pgtype.Array[string]{
+	Elements: []string{"protest", "labor"},
+	Dims:     []pgtype.ArrayDimension{{Length: 2, LowerBound: 1}},
+	Valid:    true,
+}
+```
+
+不要把生成类型改回裸 `[]string`：pgx 5.11 能通过 `database/sql` 直接扫描 slice，但当前 GORM
+写入时仍会先把普通 slice 展开为多个 SQL 参数；`pgtype.Array[T]` 可以让 GORM 将整个数组作为一个
+参数交给 pgx ArrayCodec。
+
 ## 定时任务
 
 需要应用内定时工作时，通过 `server.Scheduler().Add(scheduler.Job{...})` 在启动组合根注册。任务使用
