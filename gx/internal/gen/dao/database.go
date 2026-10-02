@@ -173,6 +173,7 @@ type postgresColumnTypeRow struct {
 	ColumnName      string `gorm:"column:column_name"`
 	TypeOID         uint32 `gorm:"column:type_oid"`
 	TypeName        string `gorm:"column:type_name"`
+	IsArray         bool   `gorm:"column:is_array"`
 	ElementOID      uint32 `gorm:"column:element_oid"`
 	ElementTypeName string `gorm:"column:element_type_name"`
 }
@@ -200,6 +201,7 @@ func loadPostgresColumnTypes(database *gorm.DB, tableNames []string) (map[string
 			attribute.attname AS column_name,
 			type.oid::bigint AS type_oid,
 			type.typname AS type_name,
+			(type.typcategory = 'A') AS is_array,
 			type.typelem::bigint AS element_oid,
 			COALESCE(element_type.typname, '') AS element_type_name
 		FROM pg_catalog.pg_attribute AS attribute
@@ -227,6 +229,7 @@ func loadPostgresColumnTypes(database *gorm.DB, tableNames []string) (map[string
 		result[postgresColumnTypeKey(row.TableSchema+"."+row.TableName, row.ColumnName)] = typemapping.PostgresType{
 			OID:         row.TypeOID,
 			Name:        row.TypeName,
+			IsArray:     row.IsArray,
 			ElementOID:  row.ElementOID,
 			ElementName: row.ElementTypeName,
 		}
