@@ -9,7 +9,7 @@ type PostgresMapper struct{}
 
 func (PostgresMapper) Map(column Column) (string, bool) {
 	if column.Postgres != nil {
-		if column.Postgres.ElementOID != 0 {
+		if column.Postgres.IsArray {
 			mapped, known := postgresScalarType(column.Postgres.ElementName)
 			if !known {
 				return "", false
