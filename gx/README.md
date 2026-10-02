@@ -214,12 +214,24 @@ internal/dao/**/*.gen.go
 internal/model/entity/**/*.gen.go
 ```
 
-PostgreSQL 类型生成以“直接使用成熟实现”为原则，不在 gonex 中复制数据库值类型。Go 1.27 项目通过
-pgx 5.11+ 的 `database/sql` 类型扫描能力直接使用原生 slice 和 pgx 类型；`gx dao` 会为 PostgreSQL
-项目保证 `github.com/jackc/pgx/v5 >= v5.11.0`，已有更高版本不会被降级。典型映射包括：
+PostgreSQL 类型生成以“直接使用成熟实现”为原则，不在 gonex 中复制数据库值类型。`gx dao`
+会读取 `pg_catalog.pg_type` 的类型 OID、`typcategory`、`typelem` 和元素类型，再由同一套 scalar
+resolver 派生数组元素类型；它不再通过 `_text`、`text[]` 等字符串规则猜测数组。数组映射按
+**具体列**应用，避免 PostgreSQL/GORM introspection 把不同数组统一暴露为 `ARRAY` 后发生全局
+type hook 冲突。
+
+Go 1.27 项目使用 pgx 5.11+；`gx dao` 会保证
+`github.com/jackc/pgx/v5 >= v5.11.0`，已有更高版本不会被降级。标准 PostgreSQL 数组生成
+`pgtype.Array[T]`，而不是裸 `[]T` 或 `pgtype.FlatArray[T]`：当前 GORM 会在 SQL 构建阶段展开
+slice 参数，而 `pgtype.Array[T]` 是 pgx 自带的结构值，GORM 会把它作为一个参数交给 pgx 的
+ArrayCodec，从而同时支持 Create、Save、Updates 和读取。典型映射包括：
 
 ```text
-text[] / bigint[]       -> []string / []int64
+text[]                  -> pgtype.Array[string]
+bigint[]                -> pgtype.Array[int64]
+boolean[]               -> pgtype.Array[bool]
+double precision[]      -> pgtype.Array[float64]
+uuid[]                  -> pgtype.Array[datatypes.UUID]
 uuid                    -> datatypes.UUID
 json / jsonb            -> datatypes.JSON
 numeric / decimal       -> decimal.Decimal
@@ -228,6 +240,10 @@ inet / cidr             -> netip.Addr / netip.Prefix
 point / line / polygon  -> pgtype 对应几何类型
 range / multirange      -> pgtype.Range / pgtype.Multirange
 ```
+
+`pgtype.Array[T]` 用 `Valid` 表示 SQL NULL，并保留 PostgreSQL dimensions/lower bounds。
+普通一维数组通常使用 `Dims: []pgtype.ArrayDimension{{Length: n, LowerBound: 1}}`；不要把 NULL
+数组自动改成空数组，也不要在业务代码中再包一层 `pq.Array`。
 
 `gx dao` 会先在 module 内的临时目录生成、修复数据库注释可能造成的非法 struct tag，并校验全部
 Go 文件；验证通过后才成对替换 DAO/Entity。依赖整理使用 `go mod tidy -e`，因此项目中无关包暂时存在
