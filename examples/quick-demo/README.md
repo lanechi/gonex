@@ -115,6 +115,13 @@ DATABASE_LOG_SLOW_THRESHOLD=200ms
 `github.com/lanechi/gonex/contrib/gormlog` 接入框架 Logger。数据库由应用初始化，并在
 `server.OnStop` 中关闭。
 
+### PostgreSQL 数组类型
+
+本示例将 pgx 固定到 5.11+，与当前 `gx dao` 的 PostgreSQL 生成契约一致。标准数组列不会生成
+`[]T` 或 `pq.*Array`，而是生成 `pgtype.Array[T]`；gx 通过 PostgreSQL catalog OID/元素类型
+识别数组，并按具体列设置 Entity 类型。这样 GORM 在 Create、Save、Updates 时把数组作为单个
+driver 参数交给 pgx，而不是把 slice 展开成 SQL value list。
+
 ## 使用本地 gx 重新生成
 
 先从 gonex 仓库根目录构建：
