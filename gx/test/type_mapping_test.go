@@ -98,6 +98,7 @@ func TestPostgresArrayMappingUsesPGXArray(t *testing.T) {
 				Postgres: &typemapping.PostgresType{
 					OID:         1000 + test.elementOID,
 					Name:        "_" + test.elementName,
+					IsArray:     true,
 					ElementOID:  test.elementOID,
 					ElementName: test.elementName,
 				},
@@ -126,7 +127,7 @@ func TestTypeMappingPreservesNullablePGXValues(t *testing.T) {
 		DataType: "ARRAY",
 		Nullable: true,
 		Postgres: &typemapping.PostgresType{
-			OID: 1009, Name: "_text", ElementOID: 25, ElementName: "text",
+			OID: 1009, Name: "_text", IsArray: true, ElementOID: 25, ElementName: "text",
 		},
 	}
 	if got := typemapping.MapFieldType(typemapping.DatabasePostgres, array); got != "pgtype.Array[string]" {
@@ -146,11 +147,11 @@ func TestTypeMappingKeepsPostgresArraysColumnSpecific(t *testing.T) {
 		Columns: []typemapping.Column{
 			{
 				TableName: "public.array_values", Name: "tags", DataType: "ARRAY", ColumnType: "text[]",
-				Postgres: &typemapping.PostgresType{OID: 1009, Name: "_text", ElementOID: 25, ElementName: "text"},
+				Postgres: &typemapping.PostgresType{OID: 1009, Name: "_text", IsArray: true, ElementOID: 25, ElementName: "text"},
 			},
 			{
 				TableName: "public.array_values", Name: "related_ids", DataType: "ARRAY", ColumnType: "bigint[]",
-				Postgres: &typemapping.PostgresType{OID: 1016, Name: "_int8", ElementOID: 20, ElementName: "int8"},
+				Postgres: &typemapping.PostgresType{OID: 1016, Name: "_int8", IsArray: true, ElementOID: 20, ElementName: "int8"},
 			},
 			{TableName: "public.array_values", Name: "title", DataType: "text", ColumnType: "text"},
 		},
