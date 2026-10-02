@@ -1,7 +1,10 @@
 package typemapping
 
 // PostgresMapper maps PostgreSQL built-in, alias, and array types to existing
-// Go, GORM, and pgx types that can be used directly by GORM.
+// Go, GORM, and pgx types that can be used directly by GORM. PostgreSQL arrays
+// use pgtype.Array[T] rather than a slice: GORM binds structs as one driver
+// argument while ordinary slices are expanded as SQL value lists before pgx
+// can apply its ArrayCodec.
 type PostgresMapper struct{}
 
 func (PostgresMapper) Map(column Column) (string, bool) {
@@ -11,7 +14,7 @@ func (PostgresMapper) Map(column Column) (string, bool) {
 			if !known {
 				return "", false
 			}
-			return "[]" + mapped, true
+			return "pgtype.Array[" + mapped + "]", true
 		}
 		if mapped, ok := postgresScalarType(column.Postgres.Name); ok {
 			return mapped, true
