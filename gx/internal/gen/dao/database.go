@@ -102,6 +102,23 @@ func buildTypeMapping(
 	return mapping, nil
 }
 
+func postgresModelOptions(mapping typemapping.Mapping, tableName string) []gen.ModelOpt {
+	fields := mapping.FieldTypes[tableName]
+	if len(fields) == 0 {
+		return nil
+	}
+	columnNames := make([]string, 0, len(fields))
+	for columnName := range fields {
+		columnNames = append(columnNames, columnName)
+	}
+	sort.Strings(columnNames)
+	options := make([]gen.ModelOpt, 0, len(columnNames))
+	for _, columnName := range columnNames {
+		options = append(options, gen.FieldType(columnName, fields[columnName]))
+	}
+	return options
+}
+
 func stripNullableCollectionType(field gen.Field) gen.Field {
 	if field == nil {
 		return nil
@@ -265,7 +282,8 @@ func generatePostgresModels(project Project, database *gorm.DB, requested, outpu
 		generator.WithFileNameStrategy(stripPostgresSchemaFromFileName)
 		models := make([]interface{}, 0, len(selected))
 		for _, table := range selected {
-			model := generator.GenerateModelAs(qualifiedPostgresTable(table), postgresModelName(table.Name))
+			qualifiedTable := qualifiedPostgresTable(table)
+			model := generator.GenerateModelAs(qualifiedTable, postgresModelName(table.Name), postgresModelOptions(mapping, qualifiedTable)...)
 			if model != nil {
 				models = append(models, model)
 			}
@@ -384,7 +402,8 @@ func generatePostgresSchema(
 	generator.WithFileNameStrategy(stripPostgresSchemaFromFileName)
 	models := make([]interface{}, 0, len(tables))
 	for _, table := range tables {
-		model := generator.GenerateModelAs(qualifiedPostgresTable(table), postgresModelName(table.Name))
+		qualifiedTable := qualifiedPostgresTable(table)
+		model := generator.GenerateModelAs(qualifiedTable, postgresModelName(table.Name), postgresModelOptions(mapping, qualifiedTable)...)
 		if model != nil {
 			models = append(models, model)
 		}
