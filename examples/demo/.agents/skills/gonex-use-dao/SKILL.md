@@ -74,6 +74,27 @@ func (*logic) Summary(ctx context.Context, id int64) (*model.UserSummary, error)
 
 若 `dao.Q` 已能完成同一操作，必须使用 DAO，不要默认编写 Raw SQL。
 
+## PostgreSQL 数组
+
+PostgreSQL 标准数组由 `gx dao` 读取 `pg_catalog.pg_type` 的 OID、`typcategory`、`typelem`
+和元素类型后生成；不要根据 `_text`、`text[]` 等字符串自行猜测类型，也不要手工修改生成的
+Entity。
+
+生成约定：
+
+```text
+text[]             -> pgtype.Array[string]
+bigint[]           -> pgtype.Array[int64]
+boolean[]          -> pgtype.Array[bool]
+double precision[] -> pgtype.Array[float64]
+```
+
+不要把这些字段改成裸 `[]T`、`pgtype.FlatArray[T]` 或 `pq.*Array`。当前 GORM 会在写 SQL
+时展开 slice；`pgtype.Array[T]` 是 pgx 自带结构类型，可以作为单个参数交给 pgx ArrayCodec。
+`Valid=false` 表示 SQL NULL；一维非 NULL 数组要同时提供 `Elements`、`Dims` 和 `Valid=true`。
+查询、Create、Save 和 Updates 都直接使用生成 Entity 中的 `pgtype.Array[T]` 字段，不再增加
+Repository 或自定义 Scanner/Valuer 适配层。
+
 ## 依赖与验证
 
 数据库驱动和连接生命周期由应用启动层持有。生成结束后运行 `gofmt`、目标 module 的测试和
