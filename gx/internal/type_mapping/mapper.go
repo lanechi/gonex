@@ -138,9 +138,13 @@ func BuildDataTypeMap(driver DatabaseType, tables []TableColumns) Mapping {
 				key := strings.TrimSpace(column.DataType)
 				if key != "" {
 					if _, exists := result.TypeMap[key]; !exists {
-						resolvedType := mappedType
-						result.TypeMap[key] = func(gorm.ColumnType) string {
-							return resolvedType
+						tableName := table.Table
+						result.TypeMap[key] = func(columnType gorm.ColumnType) string {
+							resolved, known := mapper.Map(ColumnFromGORM(tableName, columnType))
+							if !known || strings.TrimSpace(resolved) == "" {
+								return "string"
+							}
+							return resolved
 						}
 					}
 				}
